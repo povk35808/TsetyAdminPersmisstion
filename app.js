@@ -8,8 +8,6 @@ import {
     performAdminAction
 } from './firebase-service.js';
 
-// [បានលុប] Firebase imports ត្រូវបានផ្លាស់ទីទៅ service
-
 // --- Firebase Config ---
 const firebaseConfig = {
     apiKey: "AIzaSyDjr_Ha2RxOWEumjEeSdluIW3JmyM76mVk",
@@ -22,9 +20,6 @@ const firebaseConfig = {
 };
 
 // --- Global State & Element References ---
-// [បានលុប] db, auth, collection paths (ឥឡូវ​ស្ថិត​នៅ​ក្នុង service)
-// [បានលុប] requestsUnsubscribe (ឥឡូវ​ស្ថិត​នៅ​ក្នុង service)
-
 const ADMIN_NAME = "Admin Daro";
 let globalAllRequests = []; // For detail modal
 let allDepartments = new Set(); // For department filter
@@ -459,31 +454,100 @@ function renderCompactCard(request) {
     `;
 }
 
+// --- [*** កែសម្រួលនៅទីនេះ ***] ---
 // --- Render Single Request Card (Full Detail) ---
 function renderRequestCard(request) {
     if (!request || !request.id) return '';
     
-    const deleteButton = `
-        <button data-id="${request.id}" data-type="${request.type}" data-action="delete" class="action-btn text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-500 transition-colors duration-150 p-1 rounded-full">
-            <i class="fas fa-trash-alt fa-fw"></i>
-        </button>
-    `;
-
+    // --- [កែសម្រួល] Logic សម្រាប់ប៊ូតុង អនុម័ត/បដិសេធ ---
     let actionButtons = '';
-    switch (request.status) {
-        case 'pending':
-        case 'editing':
-            actionButtons = `
-                <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
-                    <button data-id="${request.id}" data-type="${request.type}" data-action="approve" class="flex-1 action-btn bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
-                        <i class="fas fa-check fa-fw"></i> អនុម័ត
-                    </button>
-                    <button data-id="${request.id}" data-type="${request.type}" data-action="reject" class="flex-1 action-btn bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
-                        <i class="fas fa-times fa-fw"></i> បដិសេធ
-                    </button>
-                </div>`;
-            break;
+    if (request.status === 'pending') {
+        // 1. (Part 1) បង្ហាញប៊ូតុងសម្រាប់តែ 'pending'
+        actionButtons = `
+            <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
+                <button data-id="${request.id}" data-type="${request.type}" data-action="approve" class="flex-1 action-btn bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
+                    <i class="fas fa-check fa-fw"></i> អនុម័ត
+                </button>
+                <button data-id="${request.id}" data-type="${request.type}" data-action="reject" class="flex-1 action-btn bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
+                    <i class="fas fa-times fa-fw"></i> បដិសេធ
+                </button>
+            </div>`;
+    } else if (request.status === 'editing') {
+        // 2. (Part 1) បង្ហាញសារ 'disabled' ពេល 'editing'
+        actionButtons = `
+            <div class="mt-4 pt-3 border-t border-primary text-center">
+                <p class="text-xs text-yellow-600 dark:text-yellow-400 italic p-2 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
+                    <i class="fas fa-exclamation-triangle fa-fw"></i> បុគ្គលិកកំពុងកែសម្រួល។ មិនអាចអនុម័ត/បដិសេធបានទេ។
+                </p>
+            </div>`;
     }
+    // 3. សម្រាប់ 'approved'/'rejected' គឺ actionButtons = '' (ត្រឹមត្រូវ)
+
+    
+    // --- [កែសម្រួល] Logic សម្រាប់ប៊ូតុងលុប (Delete Button) ---
+    let deleteButton = ''; // Default: មិនបង្ហាញប៊ូតុងលុប
+    const now = new Date();
+
+    if (request.status === 'pending') {
+        // (Part 1) អនុញ្ញាតឲ្យលុប ពេល 'pending'
+        deleteButton = `
+            <button data-id="${request.id}" data-type="${request.type}" data-action="delete" class="action-btn text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-500 transition-colors duration-150 p-1 rounded-full" title="លុប">
+                <i class="fas fa-trash-alt fa-fw"></i>
+            </button>
+        `;
+    } else if (request.status === 'editing') {
+        // (Part 1) មិនអនុញ្ញាតឲ្យលុប ពេល 'editing'
+        deleteButton = `
+            <span class="text-gray-400 dark:text-gray-500 p-1" title="កំពុងកែសម្រួល, មិនអាចលុបបាន">
+                <i class="fas fa-ban fa-fw"></i>
+            </span>
+        `;
+    } else if (request.status === 'approved' || request.status === 'rejected') {
+        // (Part 2) ពិនិត្យច្បាប់ 55 នាទី
+        let decisionTime;
+        
+        // ព្យាយាមអាន decisionAt (អាចជា Firebase Timestamp, object, or string)
+        if (request.decisionAt?.toDate) {
+            decisionTime = request.decisionAt.toDate(); // ពី Firestore Timestamp
+        } else if (request.decisionAt?.seconds) {
+            decisionTime = new Date(request.decisionAt.seconds * 1000); // ពី Serialized object
+        } else if (request.decisionAt) {
+            try { decisionTime = new Date(request.decisionAt); } catch(e){} // ពី String
+        }
+
+        if (decisionTime && !isNaN(decisionTime.getTime())) {
+            const minutesSinceDecision = (now.getTime() - decisionTime.getTime()) / (1000 * 60);
+            
+            if (minutesSinceDecision < 55) {
+                // នៅក្រោម 55 នាទី: អនុញ្ញាតឲ្យលុប
+                const minutesLeft = Math.floor(55 - minutesSinceDecision);
+                deleteButton = `
+                    <button data-id="${request.id}" data-type="${request.type}" data-action="delete" 
+                            class="action-btn text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-500 transition-colors duration-150 p-1 rounded-full"
+                            title="អាចលុបបាន (នៅសល់ ${minutesLeft} នាទី)">
+                        <i class="fas fa-trash-alt fa-fw"></i>
+                    </button>
+                `;
+            } else {
+                // លើស 55 នាទី: បង្ហាញ icon lock
+                deleteButton = `
+                    <span class="text-gray-400 dark:text-gray-500 p-1" title="ផុតកំណត់ (55 នាទី) មិនអាចលុបបានទៀតទេ">
+                        <i class="fas fa-lock fa-fw"></i>
+                    </span>
+                `;
+            }
+        } else {
+            // រកមិនឃើញ decisionAt ឬទិន្នន័យមិនត្រឹមត្រូវ
+            deleteButton = `
+                <span class="text-gray-400 dark:text-gray-500 p-1" title="មិនមានពេលវេលាសម្រេចចិត្ត (decisionAt)">
+                    <i class="fas fa-question-circle fa-fw"></i>
+                </span>
+             `;
+        }
+    }
+    
+    // --- Render កាត ---
+    // (ផ្នែកនេះមិនបានកែទេ គ្រាន់តែប្រើអថេរ (variables) ថ្មីខាងលើ)
     const detailHtml = getRequestDetailHtml(request, deleteButton); 
 
     return `
@@ -492,6 +556,8 @@ function renderRequestCard(request) {
             ${actionButtons}
         </div>`;
 }
+// --- [*** ចប់ការកែសម្រួល ***] ---
+
  
 // --- Helper to generate detail HTML for Full Card and Modal ---
 function getRequestDetailHtml(request, extraHeaderHtml = '') {
