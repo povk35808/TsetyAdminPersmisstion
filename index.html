@@ -1,1034 +1,41 @@
 <!DOCTYPE html>
-<!-- [MODIFIED] Added dark class handling -->
 <html lang="km" class="">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Admin - កម្មវិធី​សុំ​ច្បាប់</title>
-    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
-    <!-- Google Font: Khmer -->
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=Kantumruy+Pro:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <!-- Font Awesome (for icons) -->
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" xintegrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0/css/all.min.css" integrity="sha512-9usAa10IRO0HhonpyAIVpjrylPvoDwiPUiKdWk5t3PyolY1cOd4DSE0Ga+ri4AuTroPR5aQvXU9xC6qOPnzFeg==" crossorigin="anonymous" referrerpolicy="no-referrer" />
 
-    <!-- [NEW] Favicon -->
     <link rel="shortcut icon" href="https://img.icons8.com/fluency/48/goodnotes--v1.png" type="image/x-icon">
 
-    <!-- Firebase SDK (Keep existing script block) -->
-    <script type="module">
-        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-        import {
-            getFirestore, doc, updateDoc, deleteDoc, collection, query, where, onSnapshot, serverTimestamp, Timestamp, setLogLevel,
-        } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+    <link rel="stylesheet" href="style.css">
 
-        // Enable Firestore debug logging
-        setLogLevel('debug');
+    <script type="module" src="app.js"></script>
 
-        // --- Firebase Config ---
-        const firebaseConfig = {
-            apiKey: "AIzaSyDjr_Ha2RxOWEumjEeSdluIW3JmyM76mVk",
-            authDomain: "dipermisstion.firebaseapp.com",
-            projectId: "dipermisstion",
-            storageBucket: "dipermisstion.firebasestorage.app",
-            messagingSenderId: "512999406057",
-            appId: "1:512999406057:web:953a281ab9dde7a9a0f378",
-            measurementId: "G-KDPHXZ7H4B"
-        };
-
-        // --- Global State & Element References ---
-        let db, auth;
-        let requestsUnsubscribe = null;
-        const ADMIN_NAME = "Admin Daro";
-        let globalAllRequests = []; // For detail modal
-        let allDepartments = new Set(); // [NEW] For department filter
-
-        // --- Firestore Collection Path ---
-        let leaveRequestsCollectionPath;
-        let outRequestsCollectionPath;
-
-        // --- Element References ---
-        let mainContentArea, requestListContainer, loadingIndicator, emptyPlaceholder, errorDisplay, footerNav;
-        let settingsPage, toggleMonthFilter, toggleCompactView;
-        let currentFilter = 'pending'; // Default filter
-
-        // --- [NEW] Settings Elements ---
-        let approvedFilterRadios, toggleDepartmentFilter, departmentFilterContainer, departmentSelect;
-        let darkModeRadios, themeSelect;
-
-        // --- [MODIFIED] Settings State ---
-        let settings = {
-            filterCurrentMonth: false,
-            compactViewApproved: false,
-            approvedFilterType: 'all', // 'all', 'leave', 'out'
-            filterByDepartment: false,
-            selectedDepartment: 'all', // 'all', or 'IT Support', etc.
-            darkMode: 'auto', // 'auto', 'light', 'dark'
-            theme: 'original' // 'original', 'glass', 'ocean', etc.
-        };
-
-        // --- Modal References ---
-        let confirmationModal, confirmationTitle, confirmationMessage, confirmYesBtn, confirmNoBtn;
-        let customAlertModal, customAlertTitle, customAlertMessage, customAlertIconSuccess, customAlertIconWarning;
-        let requestDetailModal, detailModalContent, detailModalCloseBtn;
-
-
-        // --- Helper: Format Timestamp ---
-        function formatFirestoreTimestamp(timestamp, format = 'HH:mm dd/MM/yyyy') {
-             let date;
-             if (!timestamp) return "";
-             if (timestamp instanceof Date) date = timestamp;
-             else if (timestamp.toDate) date = timestamp.toDate();
-             else if (typeof timestamp === 'string') { date = new Date(timestamp); if (isNaN(date.getTime())) return ""; }
-             else if (timestamp.seconds) date = new Date(timestamp.seconds * 1000);
-             else return "";
-             const hours = String(date.getHours()).padStart(2, '0');
-             const minutes = String(date.getMinutes()).padStart(2, '0');
-             const day = String(date.getDate()).padStart(2, '0');
-             const month = String(date.getMonth() + 1).padStart(2, '0');
-             const year = date.getFullYear();
-             if (format === 'HH:mm' || format === 'time') return `${hours}:${minutes}`;
-             if (format === 'dd/MM/yyyy' || format === 'date') return `${day}/${month}/${year}`;
-             return `${hours}:${minutes} ${day}/${month}/${year}`;
-        }
-
-        // --- [MODIFIED] Settings Functions ---
-        function loadSettings() {
-            try {
-                const savedSettings = localStorage.getItem('adminSettings');
-                if (savedSettings) {
-                    // Merge saved settings, keeping defaults for new/missing keys
-                    const parsed = JSON.parse(savedSettings);
-                    settings = { ...settings, ...parsed };
-                }
-            } catch (e) {
-                console.error("Failed to load settings:", e);
-                localStorage.removeItem('adminSettings');
-            }
-            
-            // Update UI elements based on loaded settings
-            if (toggleMonthFilter) toggleMonthFilter.checked = settings.filterCurrentMonth;
-            if (toggleCompactView) toggleCompactView.checked = settings.compactViewApproved;
-            
-            // Approved filter
-            if (approvedFilterRadios) approvedFilterRadios.forEach(radio => radio.checked = (radio.value === settings.approvedFilterType));
-
-            // Department filter
-            if (toggleDepartmentFilter) toggleDepartmentFilter.checked = settings.filterByDepartment;
-            if (departmentFilterContainer) departmentFilterContainer.classList.toggle('hidden', !settings.filterByDepartment);
-            if (departmentSelect) departmentSelect.value = settings.selectedDepartment;
-
-            // Dark mode
-            if (darkModeRadios) darkModeRadios.forEach(radio => radio.checked = (radio.value === settings.darkMode));
-            
-            // Theme
-            if (themeSelect) themeSelect.value = settings.theme;
-
-            // Apply visual settings on load
-            applyDarkMode();
-            applyTheme();
-        }
-
-        function saveSettings() {
-            try {
-                localStorage.setItem('adminSettings', JSON.stringify(settings));
-            } catch (e) {
-                console.error("Failed to save settings:", e);
-            }
-        }
-        
-        // --- [NEW] Dark Mode & Theme Functions ---
-        function applyDarkMode() {
-            const root = document.documentElement;
-            if (settings.darkMode === 'auto') {
-                const prefersDark = window.matchMedia('(prefers-color-scheme: dark)').matches;
-                root.classList.toggle('dark', prefersDark);
-            } else if (settings.darkMode === 'dark') {
-                root.classList.add('dark');
-            } else {
-                root.classList.remove('dark');
-            }
-        }
-        
-        function applyTheme() {
-            document.documentElement.dataset.theme = settings.theme;
-            // Show/hide bg image for glass theme
-            document.getElementById('body-bg-image').classList.toggle('hidden', settings.theme !== 'glass');
-        }
-        
-        // [NEW] Media query listener for auto dark mode
-        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
-            if (settings.darkMode === 'auto') {
-                applyDarkMode();
-            }
-        });
-
-        // --- App Initialization ---
-        document.addEventListener('DOMContentLoaded', async () => {
-
-            // --- Assign Element References ---
-            mainContentArea = document.getElementById('main-content-area');
-            requestListContainer = document.getElementById('request-list');
-            loadingIndicator = document.getElementById('loading-indicator');
-            emptyPlaceholder = document.getElementById('empty-placeholder');
-            errorDisplay = document.getElementById('error-display');
-            footerNav = document.getElementById('footer-nav');
-            settingsPage = document.getElementById('settings-page');
-            toggleMonthFilter = document.getElementById('toggle-month-filter');
-            toggleCompactView = document.getElementById('toggle-compact-view');
-            
-            // --- [NEW] Assign Settings Elements ---
-            approvedFilterRadios = document.querySelectorAll('input[name="approved-filter-type"]');
-            toggleDepartmentFilter = document.getElementById('toggle-department-filter');
-            departmentFilterContainer = document.getElementById('department-filter-container');
-            departmentSelect = document.getElementById('department-select');
-            darkModeRadios = document.querySelectorAll('input[name="dark-mode-select"]');
-            themeSelect = document.getElementById('theme-select');
-
-            // --- Assign Modal Elements ---
-            customAlertModal = document.getElementById('custom-alert-modal');
-            customAlertTitle = document.getElementById('custom-alert-title');
-            customAlertMessage = document.getElementById('custom-alert-message');
-            customAlertIconSuccess = document.getElementById('custom-alert-icon-success');
-            customAlertIconWarning = document.getElementById('custom-alert-icon-warning');
-            
-            confirmationModal = document.getElementById('confirmation-modal');
-            confirmationTitle = document.getElementById('confirmation-title');
-            confirmationMessage = document.getElementById('confirmation-message');
-            confirmYesBtn = document.getElementById('confirm-yes-btn');
-            confirmNoBtn = document.getElementById('confirm-no-btn');
-
-            requestDetailModal = document.getElementById('request-detail-modal');
-            detailModalContent = document.getElementById('detail-modal-content');
-            detailModalCloseBtn = document.getElementById('detail-modal-close-btn');
-            
-            const customAlertOkBtn = document.getElementById('custom-alert-ok-btn');
-
-            // --- Load Settings from localStorage ---
-            loadSettings();
-
-            // --- Initialize Firebase ---
-            try {
-                if (!firebaseConfig.projectId) throw new Error("Firebase config is missing or invalid.");
-                const app = initializeApp(firebaseConfig);
-                db = getFirestore(app);
-                auth = getAuth(app);
-
-                const canvasAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-                leaveRequestsCollectionPath = `/artifacts/${canvasAppId}/public/data/leave_requests`;
-                outRequestsCollectionPath = `/artifacts/${canvasAppId}/public/data/out_requests`;
-                console.log("Admin App Using Firestore Leave Path:", leaveRequestsCollectionPath);
-                console.log("Admin App Using Firestore Out Path:", outRequestsCollectionPath);
-
-                // --- Firebase Authentication ---
-                 onAuthStateChanged(auth, (user) => {
-                     if (user) {
-                         console.log("Admin App: Signed in. UID:", user.uid);
-                         setupRequestListener(currentFilter); // Use default filter
-                         updateActiveNavButton(currentFilter); // Highlight active button
-                     } else {
-                         console.log("Admin App: No user. Attempting anonymous sign-in...");
-                         signInAnonymously(auth).catch(anonError => {
-                             console.error("Admin App: Anonymous Sign-In Error:", anonError);
-                             showError(`Critical Error: មិនអាច Sign In បានទេ។ ${anonError.message}។`);
-                         });
-                     }
-                 });
-
-            } catch (e) {
-                console.error("Firebase Initialization Error:", e);
-                showError(`Critical Error: មិនអាច​តភ្ជាប់ Firebase បាន​ទេ។ ${e.message}។ សូម Refresh ម្ដងទៀត។`);
-            }
-
-            // --- Footer Navigation Listener ---
-            if (footerNav) {
-                footerNav.addEventListener('click', (event) => {
-                    const navButton = event.target.closest('.filter-nav-btn');
-                    if (navButton && navButton.dataset.filter) {
-                        const newFilter = navButton.dataset.filter;
-                        
-                        // Handle Settings Page
-                        if (newFilter === 'settings') {
-                            if (mainContentArea) mainContentArea.classList.add('hidden');
-                            if (settingsPage) settingsPage.classList.remove('hidden');
-                            currentFilter = 'settings';
-                        } else {
-                            // Handle Request List Pages
-                            if (mainContentArea) mainContentArea.classList.remove('hidden');
-                            if (settingsPage) settingsPage.classList.add('hidden');
-                            
-                            if (newFilter !== currentFilter) {
-                                console.log("Filter changed to:", newFilter);
-                                currentFilter = newFilter;
-                                setupRequestListener(currentFilter);
-                            }
-                        }
-                        updateActiveNavButton(currentFilter);
-                    }
-                });
-            }
-
-            // --- Event Listener for Card Action Buttons & Compact Cards ---
-            if (requestListContainer) {
-                requestListContainer.addEventListener('click', (event) => {
-                    const actionButton = event.target.closest('.action-btn');
-                    const compactCard = event.target.closest('.compact-card-btn');
-                    
-                    if (actionButton) {
-                        promptForAdminAction(actionButton); // Pass the button
-                    } else if (compactCard) {
-                        const { id, type } = compactCard.dataset;
-                        const request = globalAllRequests.find(r => r.id === id && r.type === type);
-                        if (request) {
-                            showRequestDetailModal(request);
-                        }
-                    }
-                });
-            }
-
-
-            // --- Listeners for Modals ---
-            if (customAlertOkBtn) customAlertOkBtn.addEventListener('click', hideCustomAlert);
-            if (confirmNoBtn) confirmNoBtn.addEventListener('click', () => confirmationModal.classList.add('hidden'));
-            if (detailModalCloseBtn) detailModalCloseBtn.addEventListener('click', hideRequestDetailModal);
-            if (requestDetailModal) requestDetailModal.addEventListener('click', (e) => { if(e.target === requestDetailModal) hideRequestDetailModal(); }); // Hide on backdrop click
-
-            if (confirmYesBtn) {
-                confirmYesBtn.addEventListener('click', () => {
-                    const { id, type, action } = confirmYesBtn.dataset;
-                    if (id && type && action) executeAdminAction(id, type, action); 
-                    confirmationModal.classList.add('hidden');
-                });
-            }
-
-            // --- [MODIFIED] Listeners for Settings Toggles ---
-            if (toggleMonthFilter) {
-                toggleMonthFilter.addEventListener('change', (e) => {
-                    settings.filterCurrentMonth = e.target.checked;
-                    saveSettings();
-                    if (currentFilter !== 'settings') setupRequestListener(currentFilter);
-                });
-            }
-            if (toggleCompactView) {
-                toggleCompactView.addEventListener('change', (e) => {
-                    settings.compactViewApproved = e.target.checked;
-                    saveSettings();
-                    if (currentFilter === 'approved') sortAndRenderRequests(globalAllRequests, currentFilter);
-                });
-            }
-
-            // --- [NEW] Listeners for New Settings ---
-            if (approvedFilterRadios) {
-                approvedFilterRadios.forEach(radio => radio.addEventListener('change', (e) => {
-                    if (e.target.checked) {
-                        settings.approvedFilterType = e.target.value;
-                        saveSettings();
-                        if (currentFilter === 'approved') setupRequestListener(currentFilter);
-                    }
-                }));
-            }
-
-            if (toggleDepartmentFilter) {
-                toggleDepartmentFilter.addEventListener('change', (e) => {
-                    settings.filterByDepartment = e.target.checked;
-                    departmentFilterContainer.classList.toggle('hidden', !settings.filterByDepartment);
-                    saveSettings();
-                    // if disabled, reset filter and re-fetch
-                    if (!settings.filterByDepartment) {
-                        settings.selectedDepartment = 'all';
-                        departmentSelect.value = 'all';
-                        saveSettings();
-                    }
-                    if (currentFilter !== 'settings') setupRequestListener(currentFilter);
-                });
-            }
-
-            if (departmentSelect) {
-                departmentSelect.addEventListener('change', (e) => {
-                    settings.selectedDepartment = e.target.value;
-                    saveSettings();
-                    if (currentFilter !== 'settings') setupRequestListener(currentFilter);
-                });
-            }
-
-            if (darkModeRadios) {
-                darkModeRadios.forEach(radio => radio.addEventListener('change', (e) => {
-                    if (e.target.checked) {
-                        settings.darkMode = e.target.value;
-                        saveSettings();
-                        applyDarkMode();
-                    }
-                }));
-            }
-
-            if (themeSelect) {
-                themeSelect.addEventListener('change', (e) => {
-                    settings.theme = e.target.value;
-                    saveSettings();
-                    applyTheme();
-                });
-            }
-
-        }); // End DOMContentLoaded
-
-        // --- Update Active Nav Button ---
-        function updateActiveNavButton(activeFilter) {
-            if (!footerNav) return;
-            const buttons = footerNav.querySelectorAll('.filter-nav-btn');
-            buttons.forEach(btn => {
-                if (btn.dataset.filter === activeFilter) {
-                    btn.classList.add('text-primary', 'bg-secondary');
-                    btn.classList.remove('text-secondary');
-                } else {
-                    btn.classList.remove('text-primary', 'bg-secondary');
-                    btn.classList.add('text-secondary');
-                }
-            });
-        }
-
-
-        // --- Show Error Message ---
-        function showError(message) {
-            if (errorDisplay) { errorDisplay.textContent = message; errorDisplay.classList.remove('hidden'); }
-            if (loadingIndicator) loadingIndicator.classList.add('hidden');
-            if (requestListContainer) requestListContainer.innerHTML = '';
-            if (emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
-        }
-
-        // --- [NEW] Populate Department Filter Dropdown ---
-        function populateDepartmentDropdown() {
-            if (!departmentSelect) return;
-            const currentVal = departmentSelect.value;
-            // Clear old options (except 'All')
-            departmentSelect.innerHTML = '<option value="all">-- គ្រប់ផ្នែកទាំងអស់ --</option>';
-            
-            const sortedDepartments = [...allDepartments].filter(d => d).sort(); // Filter out null/empty and sort
-            
-            sortedDepartments.forEach(dept => {
-                const option = document.createElement('option');
-                option.value = dept;
-                option.textContent = dept;
-                departmentSelect.appendChild(option);
-            });
-            // Restore previous selection if it still exists
-            departmentSelect.value = currentVal;
-        }
-
-        // --- Setup Firestore Listener ---
-        function setupRequestListener(statusFilter = 'pending') {
-            console.log(`Setting up listener for status: ${statusFilter}`);
-            if (requestsUnsubscribe) { console.log("Unsubscribing previous listener."); requestsUnsubscribe(); }
-            if (!db) { showError("Firestore is not initialized."); return; }
-
-            if (loadingIndicator) loadingIndicator.classList.remove('hidden');
-            if (emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
-            if (errorDisplay) errorDisplay.classList.add('hidden');
-            if (requestListContainer) requestListContainer.innerHTML = '';
-            
-            const initialDepartmentCount = allDepartments.size;
-
-            const collectionsToQuery = [leaveRequestsCollectionPath, outRequestsCollectionPath];
-            let allRequests = [];
-            let initialLoadsPending = collectionsToQuery.length;
-            requestsUnsubscribe = () => { listeners.forEach(unsub => unsub()); };
-            const listeners = [];
-
-            collectionsToQuery.forEach(collectionPath => {
-                let q;
-                const baseCollectionRef = collection(db, collectionPath);
-                if (statusFilter === 'all') q = query(baseCollectionRef);
-                else if (statusFilter === 'pending') q = query(baseCollectionRef, where('status', 'in', ['pending', 'editing']));
-                else q = query(baseCollectionRef, where('status', '==', statusFilter));
-
-                const unsubscribe = onSnapshot(q, (snapshot) => {
-                    console.log(`Snapshot received for ${collectionPath.split('/').pop()}, Status: ${statusFilter}, Size: ${snapshot.size}`);
-                    const type = collectionPath.includes('leave_requests') ? 'leave' : 'out';
-                    
-                    let currentDocs = [];
-                    snapshot.forEach(doc => { 
-                        const data = doc.data();
-                        currentDocs.push({ ...data, id: doc.id, type: type }); 
-                        // [NEW] Collect departments
-                        if(data.department) allDepartments.add(data.department);
-                    });
-
-                    // [MODIFIED] Apply client-side filters
-                    
-                    // 1. Month filter
-                    if (settings.filterCurrentMonth) {
-                        const now = new Date();
-                        const currentMonthYear = `${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`; // e.g., "11/2025"
-                        
-                        currentDocs = currentDocs.filter(doc => {
-                            const startsInMonth = doc.startDate && doc.startDate.endsWith(currentMonthYear);
-                            const endsInMonth = doc.endDate && doc.endDate.endsWith(currentMonthYear);
-                            return startsInMonth || endsInMonth;
-                        });
-                        console.log(`Client-side month filter (${currentMonthYear}) applied: ${currentDocs.length} results.`);
-                    }
-                    
-                    // 2. [NEW] Approved Type filter (only on 'approved' page)
-                    if (currentFilter === 'approved' && settings.approvedFilterType !== 'all') {
-                        currentDocs = currentDocs.filter(doc => doc.type === settings.approvedFilterType);
-                    }
-                    
-                    // 3. [NEW] Department filter (if enabled)
-                    if (settings.filterByDepartment && settings.selectedDepartment !== 'all') {
-                        currentDocs = currentDocs.filter(doc => doc.department === settings.selectedDepartment);
-                    }
-                    // End client-side filters
-
-                    allRequests = allRequests.filter(req => req.type !== type).concat(currentDocs);
-                    sortAndRenderRequests(allRequests, statusFilter);
-                    
-                    if (initialLoadsPending > 0) {
-                        initialLoadsPending--;
-                        if (initialLoadsPending === 0) {
-                            if (loadingIndicator) loadingIndicator.classList.add('hidden');
-                            if(allRequests.length === 0 && emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
-                        }
-                    }
-                    
-                    // [NEW] If department list grew, populate dropdown
-                    if (allDepartments.size > initialDepartmentCount) {
-                        populateDepartmentDropdown();
-                    }
-                    
-                }, (error) => {
-                    console.error(`Error listening to ${collectionPath}:`, error);
-                    if (error.code === 'failed-precondition' && error.message.includes('index')) showError(`Error: Firestore index required for this query on ${collectionPath.split('/').pop()}. Please check console for link to create index, or simplify query.`);
-                    else showError(`Error loading ${collectionPath.split('/').pop()}: ${error.message}. Check Firestore Rules.`);
-                    if (initialLoadsPending > 0) { initialLoadsPending--; if (initialLoadsPending === 0 && loadingIndicator) loadingIndicator.classList.add('hidden'); }
-                });
-                listeners.push(unsubscribe);
-            });
-        }
-
-        // --- Sort and Render Combined Requests ---
-         function sortAndRenderRequests(requests, currentFilter) {
-             globalAllRequests = [...requests]; // [NEW] Store for detail modal
-             
-             requests.sort((a, b) => {
-                 const statusPriority = { 'pending': 1, 'editing': 2, 'approved': 3, 'rejected': 4 };
-                 const priorityA = statusPriority[a.status] || 5;
-                 const priorityB = statusPriority[b.status] || 5;
-                 if (currentFilter !== 'approved' && currentFilter !== 'rejected' && priorityA !== priorityB) return priorityA - priorityB;
-                 const timeA = a.requestedAt?.toMillis() ?? 0;
-                 const timeB = b.requestedAt?.toMillis() ?? 0;
-                 return (currentFilter === 'pending') ? timeA - timeB : timeB - timeA;
-             });
-             renderRequestList(requests);
-         }
-
-        // --- Render Request List ---
-        function renderRequestList(requests) {
-            if (!requestListContainer || !loadingIndicator || !emptyPlaceholder) return;
-            
-            // [MODIFIED] Check for Compact View
-            const isCompact = (currentFilter === 'approved' && settings.compactViewApproved);
-            
-            // Set container class
-            requestListContainer.className = isCompact 
-                ? "grid grid-cols-3 gap-2 pb-20" // 3-col grid
-                : "space-y-4 pb-20"; // Reset to single col
-
-            if (requests.length === 0) {
-                if (loadingIndicator && loadingIndicator.classList.contains('hidden') && emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
-                requestListContainer.innerHTML = ''; // Clear grid/space classes if empty
-            } else {
-                if(emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
-                // Render correct card type
-                requestListContainer.innerHTML = requests.map(req => 
-                    isCompact ? renderCompactCard(req) : renderRequestCard(req)
-                ).join('');
-            }
-        }
-        
-        // --- [NEW] Render Compact Card ---
-        // --- [BUG FIX] Changed 'classclass' to 'class' ---
-        function renderCompactCard(request) {
-            const typeText = request.type === 'leave' ? 'ច្បាប់ឈប់' : 'ចេញក្រៅ';
-            const typeColor = request.type === 'leave' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
-            const typeDarkColor = request.type === 'leave' ? 'dark:bg-blue-900 dark:text-blue-200' : 'dark:bg-green-900 dark:text-green-200';
-            
-            return `
-            <div class="compact-card-btn card-bg border border-primary rounded-lg p-2 shadow-sm hover:shadow-md hover:border-blue-400 cursor-pointer transition-all duration-150" data-id="${request.id}" data-type="${request.type}">
-                <div class="flex items-center gap-2">
-                    ${request.photo ? `<img src="${request.photo}" class="w-8 h-8 rounded-full object-cover flex-shrink-0" onerror="this.onerror=null; this.src='https://placehold.co/32x32/e2e8f0/64748b?text=?';">` : `<div class="w-8 h-8 rounded-full bg-secondary text-secondary flex items-center justify-center flex-shrink-0"><i class="fas fa-user"></i></div>`}
-                    <div class="overflow-hidden min-w-0">
-                        <p class="text-xs font-semibold truncate text-primary">${request.name || 'N/A'}</p>
-                        <p class="text-xs text-secondary truncate">(${request.userId || 'N/A'})</p>
-                    </div>
-                </div>
-                <span class="text-[10px] font-medium px-1.5 py-0.5 rounded ${typeColor} ${typeDarkColor} mt-1.5 inline-block">${typeText}</span>
-                <p class="text-xs text-primary mt-1 truncate">${request.startDate || ''}</p>
-            </div>
-            `;
-        }
-
-        // --- Render Single Request Card (Full Detail) ---
-        function renderRequestCard(request) {
-            if (!request || !request.id) return '';
-            
-            const deleteButton = `
-                <button data-id="${request.id}" data-type="${request.type}" data-action="delete" class="action-btn text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-500 transition-colors duration-150 p-1 rounded-full">
-                    <i class="fas fa-trash-alt fa-fw"></i>
-                </button>
-            `;
-
-            let actionButtons = '';
-            switch (request.status) {
-                case 'pending':
-                case 'editing':
-                    actionButtons = `
-                        <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
-                            <button data-id="${request.id}" data-type="${request.type}" data-action="approve" class="flex-1 action-btn bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
-                                <i class="fas fa-check fa-fw"></i> អនុម័ត
-                            </button>
-                            <button data-id="${request.id}" data-type="${request.type}" data-action="reject" class="flex-1 action-btn bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
-                                <i class="fas fa-times fa-fw"></i> បដិសេធ
-                            </button>
-                        </div>`;
-                    break;
-            }
-
-            // [NEW] Use helper function to get inner HTML
-            const detailHtml = getRequestDetailHtml(request, deleteButton); 
-
-            return `
-                <div class="card-bg border border-primary rounded-lg shadow-md p-4 mb-4 break-inside-avoid hover:shadow-lg transition-shadow duration-200">
-                    ${detailHtml}
-                    ${actionButtons}
-                </div>`;
-        }
-        
-        // --- [NEW] Helper to generate detail HTML for Full Card and Modal ---
-        function getRequestDetailHtml(request, extraHeaderHtml = '') {
-            if (!request || !request.id) return '';
-
-            const typeText = request.type === 'leave' ? 'ច្បាប់ឈប់សម្រាក' : 'ច្បាប់ចេញក្រៅ';
-            const typeColor = request.type === 'leave' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
-            const typeDarkColor = request.type === 'leave' ? 'dark:bg-blue-900 dark:text-blue-200' : 'dark:bg-green-900 dark:text-green-200';
-            
-            const dateString = (request.startDate === request.endDate) ? request.startDate : `${request.startDate} ដល់ ${request.endDate}`;
-            const requestedAtFormatted = formatFirestoreTimestamp(request.requestedAt, 'HH:mm dd/MM/yyyy');
-
-            let statusBadge = '';
-            let statusText = request.status || 'N/A';
-            let statusBgColor = 'bg-gray-100';
-            let statusTextColor = 'text-gray-800';
-            let statusDarkColor = 'dark:bg-gray-700 dark:text-gray-200';
-
-            switch (request.status) {
-                case 'pending': statusText = 'រង់ចាំ'; statusBgColor = 'bg-yellow-100'; statusTextColor = 'text-yellow-800'; statusDarkColor = 'dark:bg-yellow-900 dark:text-yellow-200'; break;
-                case 'editing': statusText = 'កំពុងកែ'; statusBgColor = 'bg-yellow-100'; statusTextColor = 'text-yellow-800'; statusDarkColor = 'dark:bg-yellow-900 dark:text-yellow-200'; break;
-                case 'approved': statusText = 'បានយល់ព្រម'; statusBgColor = 'bg-green-100'; statusTextColor = 'text-green-800'; statusDarkColor = 'dark:bg-green-900 dark:text-green-200'; break;
-                case 'rejected': statusText = 'បានបដិសេធ'; statusBgColor = 'bg-red-100'; statusTextColor = 'text-red-800'; statusDarkColor = 'dark:bg-red-900 dark:text-red-200'; break;
-            }
-            statusBadge = `<span class="text-xs font-bold px-2.5 py-1 rounded-full ${statusBgColor} ${statusTextColor} ${statusDarkColor}">${statusText}</span>`;
-
-            let decisionInfo = '';
-            if (request.status === 'approved' || request.status === 'rejected') {
-                decisionInfo = `<div class="text-xs text-secondary mt-2"><i class="fas fa-user-shield fa-fw mr-1"></i> ${request.decisionBy || 'N/A'} | <i class="far fa-clock fa-fw mr-1"></i> ${formatFirestoreTimestamp(request.decisionAt)}</div>`;
-            }
-
-             let returnInfo = '';
-               if (request.type === 'out' && request.returnStatus === 'បានចូលមកវិញ') {
-                   returnInfo = `<div class="text-xs text-green-700 dark:text-green-400 font-medium mt-1.5"><i class="fas fa-door-open fa-fw mr-1"></i> បានចូលវិញ: ${request.returnedAt || ''}</div>`;
-               }
-
-            return `
-                <div class="flex justify-between items-center mb-3 pb-2 border-b border-primary">
-                    <span class="text-xs font-semibold px-2 py-0.5 rounded ${typeColor} ${typeDarkColor}">${typeText}</span>
-                    <div class="flex items-center gap-2">
-                        ${statusBadge}
-                        ${extraHeaderHtml}
-                    </div>
-                </div>
-                
-                <div class="mb-3 flex items-center gap-3">
-                    <div class="flex-shrink-0">
-                        ${ request.photo
-                            ? `<img src="${request.photo}" alt="${request.name || 'Photo'}" class="w-12 h-12 rounded-full object-cover border-2 border-primary shadow-sm" onerror="this.onerror=null; this.src='https://placehold.co/48x48/e2e8f0/64748b?text=?';">`
-                            : `<div class="w-12 h-12 rounded-full bg-secondary text-secondary flex items-center justify-center"><i class="fas fa-user fa-lg"></i></div>`
-                        }
-                    </div>
-                    <div>
-                        <p class="font-semibold text-lg text-primary">${request.name || 'N/A'} <span class="text-sm font-normal text-secondary">(${request.userId || 'N/A'})</span></p>
-                        <p class="text-sm text-secondary">${request.department || 'N/A'}</p>
-                    </div>
-                </div>
-
-                <div class="text-sm space-y-1.5 mb-3">
-                    <div class="flex"><strong class="font-medium text-secondary w-20 inline-block shrink-0"><i class="far fa-calendar-alt fa-fw mr-1.5 text-blue-500"></i>កាលបរិច្ឆេទ:</strong> <span class="text-primary">${dateString}</span></div>
-                    <div class="flex"><strong class="font-medium text-secondary w-20 inline-block shrink-0"><i class="far fa-clock fa-fw mr-1.5 text-blue-500"></i>រយៈពេល:</strong> <span class="text-primary">${request.duration || 'N/A'}</span></div>
-                    <div class="flex"><strong class="font-medium text-secondary w-20 inline-block shrink-0 align-top"><i class="fas fa-info-circle fa-fw mr-1.5 text-blue-500"></i>មូលហេតុ:</strong> <span class="whitespace-pre-line inline-block text-primary">${request.reason || 'N/A'}</span></div>
-                     <div class="flex"><strong class="font-medium text-secondary w-20 inline-block shrink-0"><i class="far fa-paper-plane fa-fw mr-1.5 text-blue-500"></i>សុំនៅ:</strong> <span class="text-primary text-xs">${requestedAtFormatted}</span></div>
-                </div>
-                ${decisionInfo}
-                ${returnInfo}
-            `;
-        }
-
-        // --- [NEW] Show/Hide Request Detail Modal ---
-        function showRequestDetailModal(request) {
-            if (!requestDetailModal || !detailModalContent) return;
-            // Generate detail HTML (without delete button in the modal)
-            detailModalContent.innerHTML = getRequestDetailHtml(request, '');
-            requestDetailModal.classList.remove('hidden');
-        }
-        function hideRequestDetailModal() {
-            if (requestDetailModal) requestDetailModal.classList.add('hidden');
-            if (detailModalContent) detailModalContent.innerHTML = ''; // Clear content
-        }
-
-
-        // --- Prompt for Admin Action (Handles Approve/Reject/Delete) ---
-        function promptForAdminAction(button) { // Now accepts the button element
-            if (!button) return;
-
-            const requestId = button.dataset.id;
-            const requestType = button.dataset.type;
-            const action = button.dataset.action;
-
-            if (!requestId || !requestType || !action || !confirmationModal || !confirmYesBtn || !confirmationTitle || !confirmationMessage) {
-                console.error("Missing data attributes or modal references.");
-                return;
-            }
-
-            // --- Store data on the 'Yes' button ---
-            confirmYesBtn.dataset.id = requestId;
-            confirmYesBtn.dataset.type = requestType;
-            confirmYesBtn.dataset.action = action;
-
-            // --- Customize modal for action ---
-            if (action === 'approve') {
-                confirmationTitle.textContent = "បញ្ជាក់ការអនុម័ត";
-                confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "អនុម័ត" សំណើ (ID: ${requestId}) នេះមែនទេ?`;
-                confirmYesBtn.className = "bg-green-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2";
-                confirmYesBtn.textContent = "បាទ/ចាស, អនុម័ត";
-            } else if (action === 'reject') {
-                confirmationTitle.textContent = "បញ្ជាក់ការបដិសេធ";
-                confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "បដិសេធ" សំណើ (ID: ${requestId}) នេះមែនទេ?`;
-                confirmYesBtn.className = "bg-red-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2";
-                confirmYesBtn.textContent = "បាទ/ចាស, បដិសេធ";
-            } else if (action === 'delete') {
-                confirmationTitle.textContent = "បញ្ជាក់ការលុប";
-                confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "លុប" សំណើ (ID: ${requestId}) នេះមែនទេ?\n\nចំណាំ៖ ទិន្នន័យនេះនឹងបាត់បង់ជាអចិន្ត្រៃយ៍។`;
-                confirmYesBtn.className = "bg-red-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2";
-                confirmYesBtn.textContent = "បាទ/ចាស, លុប";
-            }
-            
-            // --- Show the modal ---
-            confirmationModal.classList.remove('hidden');
-        }
-
-
-        // --- Execute Admin Action (Handles Approve/Reject/Delete) ---
-        async function executeAdminAction(requestId, requestType, action) {
-            
-            if (!requestId || !requestType || !action) { 
-                console.error("executeAdminAction called with missing parameters."); 
-                return; 
-            }
-            
-            console.log(`Executing Action: ${action}, Type: ${requestType}, ID: ${requestId}`);
-
-            const originalButton = document.querySelector(`.action-btn[data-id="${requestId}"][data-action="${action}"]`);
-            if (originalButton) {
-                originalButton.disabled = true;
-                originalButton.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
-                if (action !== 'delete') {
-                   originalButton.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> កំពុងដំណើរការ...`;
-                }
-            } else {
-                console.warn(`Could not find button for ${requestId} to disable.`);
-            }
-
-            const collectionPath = requestType === 'leave' ? leaveRequestsCollectionPath : outRequestsCollectionPath;
-            const docRef = doc(db, collectionPath, requestId);
-
-            try {
-                if (action === 'approve' || action === 'reject') {
-                    const updateData = { 
-                        status: action === 'approve' ? 'approved' : 'rejected', 
-                        decisionAt: serverTimestamp(), 
-                        decisionBy: ADMIN_NAME 
-                    };
-                    await updateDoc(docRef, updateData);
-                    console.log(`Request ${requestId} successfully ${action}d.`);
-                    showCustomAlert("ជោគជ័យ!", `សំណើ (${requestId}) ត្រូវបាន ${action === 'approve' ? 'អនុម័ត' : 'បដិសេធ'} ដោយជោគជ័យ។`, "success");
-                
-                } else if (action === 'delete') {
-                    await deleteDoc(docRef);
-                    console.log(`Request ${requestId} successfully deleted.`);
-                    showCustomAlert("បានលុប!", `សំណើ (${requestId}) ត្រូវបានលុបចេញពីមូលដ្ឋានទិន្នន័យ។`, "success");
-                }
-            
-            } catch (error) {
-                console.error(`Error ${action}ing request ${requestId}:`, error);
-                showCustomAlert("Error", `មានបញ្ហា ${action} សំណើ: ${error.message}`);
-                
-                if (originalButton) {
-                    originalButton.disabled = false; 
-                    if (action === 'approve') originalButton.innerHTML = `<i class="fas fa-check fa-fw"></i> អនុម័ត`;
-                    else if (action === 'reject') originalButton.innerHTML = `<i class="fas fa-times fa-fw"></i> បដិសេធ`;
-                    else if (action === 'delete') originalButton.innerHTML = `<i class="fas fa-trash-alt fa-fw"></i>`;
-                }
-            }
-        }
-
-        // --- Custom Alert Modal Logic ---
-        function showCustomAlert(title, message, type = 'warning') { 
-            if (!customAlertModal || !customAlertTitle || !customAlertMessage || !customAlertIconSuccess || !customAlertIconWarning) {
-                 console.error("Custom alert elements not found.");
-                 return; 
-            }
-            customAlertTitle.textContent = title; 
-            customAlertMessage.textContent = message; 
-            if (type === 'success') { 
-                customAlertIconSuccess.classList.remove('hidden'); 
-                customAlertIconWarning.classList.add('hidden'); 
-            } else { 
-                customAlertIconSuccess.classList.add('hidden'); 
-                customAlertIconWarning.classList.remove('hidden'); 
-            } 
-            customAlertModal.classList.remove('hidden'); 
-        }
-        function hideCustomAlert() { 
-            if (customAlertModal) customAlertModal.classList.add('hidden'); 
-        }
-
-    </script>
-
-    <style>
-        /* [NEW] CSS Variables for Theming */
-        :root, [data-theme="original"] {
-            --bg-primary: 255 255 255; /* white */
-            --bg-secondary: 249 250 251; /* gray-50 */
-            --bg-header: 37 99 235; /* blue-600 */
-            --text-header: 255 255 255; /* white */
-            --text-primary: 17 24 39; /* gray-900 */
-            --text-secondary: 107 114 128; /* gray-500 */
-            --border-primary: 229 231 235; /* gray-200 */
-            --border-secondary: 243 244 246; /* gray-100 */
-            --card-bg: 255 255 255; /* white */
-            --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-        }
-
-        :root.dark, [data-theme="original"].dark {
-            --bg-primary: 31 41 55; /* gray-800 */
-            --bg-secondary: 17 24 39; /* gray-900 */
-            --bg-header: 37 99 235; /* blue-600 */
-            --text-header: 255 255 255; /* white */
-            --text-primary: 249 250 251; /* gray-50 */
-            --text-secondary: 156 163 175; /* gray-400 */
-            --border-primary: 55 65 81; /* gray-700 */
-            --border-secondary: 75 85 99; /* gray-600 */
-            --card-bg: 49 58 73; /* gray-750 custom */
-            --card-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.3), 0 1px 2px -1px rgb(0 0 0 / 0.3);
-        }
-        
-        [data-theme="glass"], [data-theme="glass"].dark {
-             /* Settings are for the card, not the whole bg */
-            --card-bg: 255 255 255 / 0.5;
-            --border-primary: 255 255 255 / 0.3;
-            --border-secondary: 255 255 255 / 0.2;
-            --text-primary: 17 24 39;
-            --text-secondary: 55 65 81;
-        }
-        [data-theme="glass"].dark {
-            --card-bg: 31 41 55 / 0.6;
-            --border-primary: 255 255 255 / 0.2;
-            --border-secondary: 255 255 255 / 0.1;
-            --text-primary: 249 250 251;
-            --text-secondary: 209 213 219;
-        }
-        
-        [data-theme="ocean"], [data-theme="ocean"].dark {
-            --bg-primary: 240 253 250; /* teal-50 */
-            --bg-secondary: 204 251 241; /* teal-100 */
-            --bg-header: 13 148 136; /* teal-600 */
-            --text-header: 255 255 255;
-            --text-primary: 15 118 110; /* teal-800 */
-            --text-secondary: 17 139 127; /* teal-700 */
-            --border-primary: 153 246 228; /* teal-200 */
-            --border-secondary: 178 245 234; /* teal-150 custom */
-            --card-bg: 255 255 255;
-        }
-        [data-theme="ocean"].dark {
-            --bg-primary: 20 83 45; /* dark green */
-            --bg-secondary: 17 70 40; 
-            --bg-header: 94 234 212; /* teal-300 */
-            --text-header: 13 148 136; /* teal-600 */
-            --text-primary: 153 246 228; /* teal-200 */
-            --text-secondary: 178 245 234;
-            --border-primary: 40 120 70;
-            --border-secondary: 45 130 75;
-            --card-bg: 25 90 50;
-        }
-        
-        [data-theme="forest"], [data-theme="forest"].dark {
-            --bg-primary: 254 252 232; /* yellow-50 */
-            --bg-secondary: 254 249 195; /* yellow-100 */
-            --bg-header: 133 77 14; /* amber-800 */
-            --text-header: 255 255 255;
-            --text-primary: 120 53 15; /* amber-900 */
-            --text-secondary: 146 64 14; /* amber-800 */
-            --border-primary: 253 230 138; /* yellow-300 */
-            --border-secondary: 254 240 138; /* yellow-200 */
-            --card-bg: 255 255 255;
-        }
-        [data-theme="forest"].dark {
-            --bg-primary: 41 37 36; /* stone-800 */
-            --bg-secondary: 28 25 23; /* stone-900 */
-            --bg-header: 252 211 77; /* yellow-400 */
-            --text-header: 120 53 15; /* amber-900 */
-            --text-primary: 253 230 138; /* yellow-300 */
-            --text-secondary: 252 211 77; /* yellow-400 */
-            --border-primary: 68 64 60; /* stone-700 */
-            --border-secondary: 87 83 78; /* stone-600 */
-            --card-bg: 51 46 45; /* stone-750 custom */
-        }
-        
-
-        /* [NEW] Utility Classes from Variables */
-        .bg-primary { background-color: rgb(var(--bg-primary)); }
-        .bg-secondary { background-color: rgb(var(--bg-secondary)); }
-        .bg-header { background-color: rgb(var(--bg-header)); }
-        .text-header { color: rgb(var(--text-header)); }
-        .text-primary { color: rgb(var(--text-primary)); }
-        .text-secondary { color: rgb(var(--text-secondary)); }
-        .border-primary { border-color: rgb(var(--border-primary)); }
-        .border-secondary { border-color: rgb(var(--border-secondary)); }
-        .card-bg { background-color: rgb(var(--card-bg)); box-shadow: var(--card-shadow); }
-        
-        /* [NEW] Glass Theme Background Image */
-        #body-bg-image {
-            background-image: url('https://images.unsplash.com/photo-1553095066-5014bc7b7f2d?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxzZWFyY2h8Mnx8d2FsbCUyMGJhY2tncm91bmR8ZW58MHx8MHx8fDA%3D&auto=format&fit=crop&w=800&q=60');
-            background-size: cover;
-            background-position: center;
-            background-attachment: fixed;
-            position: fixed;
-            top: 0; left: 0; right: 0; bottom: 0;
-            z-index: -10;
-        }
-        
-        /* [NEW] Style cards for Glass Theme */
-        [data-theme="glass"] .card-bg, [data-theme="glass"] .bg-primary, [data-theme="glass"] .bg-secondary, [data-theme="glass"] .bg-header, [data-theme="glass"] nav {
-            backdrop-filter: blur(10px) saturate(180%);
-            -webkit-backdrop-filter: blur(10px) saturate(180%);
-        }
-        /* Override for glass theme cards */
-        [data-theme="glass"] .card-bg {
-            background-color: rgba(var(--card-bg));
-            border: 1px solid rgba(var(--border-primary));
-        }
-        [data-theme="glass"].dark .card-bg {
-             background-color: rgba(var(--card-bg));
-             border: 1px solid rgba(var(--border-primary));
-        }
-
-
-        body { 
-            font-family: 'Kantumruy Pro', sans-serif; 
-            -webkit-tap-highlight-color: transparent; 
-            /* [NEW] Applied from CSS vars */
-            @apply bg-secondary text-primary transition-colors duration-300;
-        }
-        .spinner { border: 4px solid rgba(0, 0, 0, 0.1); width: 24px; height: 24px; border-radius: 50%; border-left-color: #3b82f6; /* blue-500 */ animation: spin 1s ease infinite; }
-        @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-        .break-inside-avoid { break-inside: avoid; page-break-inside: avoid; }
-        
-        #main-content-area, #settings-page {
-            padding-bottom: 80px; /* Space for footer nav */
-        }
-
-        /* [MODIFIED] Toggle Switch Styles (Re-using existing, good style) */
-        .toggle-label {
-            @apply block overflow-hidden cursor-pointer h-7 w-12 rounded-full bg-gray-300 transition-colors duration-200 ease-in-out dark:bg-gray-600;
-        }
-        .toggle-checkbox {
-            @apply absolute left-0 opacity-0 w-0 h-0;
-        }
-        .toggle-dot {
-            @apply block w-5 h-5 rounded-full bg-white shadow-md transform translate-x-1 translate-y-1 transition-transform duration-200 ease-in-out;
-        }
-        .toggle-checkbox:checked + .toggle-label {
-            @apply bg-blue-600;
-        }
-        .toggle-checkbox:checked + .toggle-label .toggle-dot {
-            @apply transform translate-x-6;
-        }
-        
-        /* [NEW] Custom Radio/Select Styles */
-        .settings-radio-label {
-            @apply block text-sm font-medium text-primary p-2 px-3 border border-primary rounded-lg cursor-pointer hover:bg-secondary;
-        }
-        .settings-radio:checked + .settings-radio-label {
-            @apply bg-blue-50 border-blue-400 text-blue-700 dark:bg-blue-900 dark:border-blue-600 dark:text-blue-200;
-        }
-        .settings-select {
-             @apply w-full p-2.5 border border-primary rounded-lg shadow-sm focus:outline-none focus:ring-1 focus:ring-blue-500 focus:border-blue-500 text-sm bg-primary text-primary;
-             -webkit-appearance: none; -moz-appearance: none; appearance: none;
-             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
-             background-position: right 0.5rem center; background-repeat: no-repeat; background-size: 1.5em 1.5em;
-             padding-right: 2.5rem;
-        }
-        .dark .settings-select {
-             background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3E%3Cpath stroke='%239ca3af' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3E%3C/svg%3E");
-        }
-        
-        /* [MODIFIED] Settings Card Style */
-        .settings-card {
-            @apply bg-primary p-3 rounded-lg shadow-sm border border-primary;
-        }
-
-        /* [MODIFIED] Segmented Control Styles (Higher Contrast) */
-        .segmented-control {
-            /* Using static colors for better contrast */
-            @apply flex w-full p-1 rounded-lg bg-gray-200 dark:bg-gray-800;
-        }
-        .segmented-label {
-            @apply block text-sm font-medium text-center text-gray-600 dark:text-gray-400 p-1.5 rounded-md cursor-pointer transition-colors duration-200 flex-1;
-        }
-        .settings-radio:checked + .segmented-label {
-            /* High contrast selected button */
-            @apply bg-white dark:bg-gray-600 text-blue-600 dark:text-white shadow-md font-medium;
-        }
-
-
-    </style>
 </head>
 <body class="bg-secondary">
     
-    <!-- [NEW] Background image container for Glass theme -->
     <div id="body-bg-image" class="hidden"></div>
 
     <div class="max-w-md mx-auto min-h-screen bg-primary shadow-lg flex flex-col">
 
-        <!-- [MODIFIED] Header with theme classes -->
         <header class="bg-header text-header p-4 shadow-md sticky top-0 z-10">
             <h1 class="text-xl font-bold text-center">Admin - គ្រប់គ្រង​សំណើ</h1>
         </header>
 
-        <!-- [MODIFIED] Main Content Area with theme classes -->
         <main id="main-content-area" class="flex-grow overflow-y-auto p-4 bg-secondary">
-            <!-- Loading Indicator -->
             <div id="loading-indicator" class="text-center py-16">
                 <div class="spinner inline-block w-8 h-8"></div>
                 <p class="text-secondary mt-3 text-sm">កំពុង​ទាញ​យក​សំណើ...</p>
             </div>
 
-            <!-- Error Display -->
             <div id="error-display" class="hidden bg-red-100 border border-red-300 text-red-800 p-4 rounded-lg text-sm mx-2 my-4">
-                <!-- Error message here -->
-            </div>
+                </div>
 
-            <!-- Empty Placeholder -->
             <div id="empty-placeholder" class="hidden text-center py-16">
                 <svg xmlns="http://www.w3.org/2000/svg" class="h-16 w-16 mx-auto text-gray-400" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="1">
                     <path stroke-linecap="round" stroke-linejoin="round" d="M19.5 14.25v-2.625a3.375 3.375 0 00-3.375-3.375h-1.5A1.125 1.125 0 0113.5 7.125v-1.5a3.375 3.375 0 00-3.375-3.375H8.25m0 12.75h7.5m-7.5 3H12M10.5 2.25H5.625c-.621 0-1.125.504-1.125 1.125v17.25c0 .621.504 1.125 1.125 1.125h12.75c.621 0 1.125-.504 1.125-1.125V11.25a9 9 0 00-9-9z" />
@@ -1037,25 +44,20 @@
                 <p class="text-sm text-gray-400 mt-1">នៅ​ពេល​មាន​សំណើ​ថ្មី វា​នឹង​បង្ហាញ​នៅ​ទីនេះ។</p>
             </div>
 
-            <!-- Request List Container -->
             <div id="request-list" class="">
-                <!-- Request cards will be injected here by JavaScript -->
-            </div>
+                </div>
         </main>
 
-        <!-- [MODIFIED] Settings Page -->
         <div id="settings-page" class="flex-grow overflow-y-auto p-4 bg-secondary hidden">
             <h2 class="text-lg font-semibold text-primary mb-4 border-b border-primary pb-2">ការកំណត់ (Settings)</h2>
             
             <div class="space-y-5">
                 
-                <!-- [MODIFIED] Section 1: General Filters -->
                 <div class="card-bg border border-primary rounded-xl p-4 space-y-4 shadow-sm">
                     <div class="flex items-center gap-3 mb-2">
                         <i class="fas fa-filter text-secondary w-5 text-center"></i>
                         <h3 class="font-medium text-primary text-lg">ការកំណត់ Filter ទូទៅ</h3>
                     </div>
-                    <!-- Setting 1: Month Filter -->
                     <div class="flex items-center justify-between">
                         <div>
                             <label for="toggle-month-filter" class="font-medium text-primary">ត្រងយកតែខែបច្ចុប្បន្ន</label>
@@ -1068,14 +70,12 @@
                     </div>
                 </div>
 
-                <!-- [MODIFIED] Section 2: 'Approved' Page Settings -->
                 <div class="card-bg border border-primary rounded-xl p-4 space-y-5 shadow-sm">
                     <div class="flex items-center gap-3 mb-2">
                         <i class="fas fa-check-circle text-secondary w-5 text-center"></i>
                         <h3 class="font-medium text-primary text-lg">Page 'បានយល់ព្រម' (✅)</h3>
                     </div>
                     
-                    <!-- Compact View -->
                     <div class="flex items-center justify-between">
                         <div>
                             <label for="toggle-compact-view" class="font-medium text-primary">បង្ហាញទិន្នន័យខ្លីៗ</label>
@@ -1087,7 +87,6 @@
                         </div>
                     </div>
                     
-                    <!-- [MODIFIED] Approved Type Filter -->
                     <div>
                         <label class="text-sm font-medium text-primary mb-2 block">ត្រងតាមប្រភេទសំណើ</label>
                         <div class="segmented-control">
@@ -1102,7 +101,6 @@
                         </div>
                     </div>
                     
-                    <!-- Department Filter -->
                     <div>
                         <div class="flex items-center justify-between">
                             <div>
@@ -1117,80 +115,66 @@
                         <div id="department-filter-container" class="mt-3 hidden">
                             <select id="department-select" class="settings-select">
                                 <option value="all">-- គ្រប់ផ្នែកទាំងអស់ --</option>
-                                <!-- Departments will be populated by JS -->
-                            </select>
+                                </select>
                         </div>
                     </div>
                 </div>
                 
-                <!-- [MODIFIED] Section 3: Theme & Style -->
                 <div class="card-bg border border-primary rounded-xl p-4 space-y-5 shadow-sm">
                      <div class="flex items-center gap-3 mb-2">
                         <i class="fas fa-palette text-secondary w-5 text-center"></i>
                         <h3 class="font-medium text-primary text-lg">ស្បែក & ពណ៌ (Theme & Style)</h3>
-                     </div>
-                     <!-- [MODIFIED] Dark Mode -->
-                     <div>
-                        <label class="text-sm font-medium text-primary mb-2 block">ពណ៌ (ថ្ងៃ/យប់)</label>
-                        <div class="segmented-control">
-                            <input type="radio" name="dark-mode-select" id="dark-auto" value="auto" class="hidden settings-radio">
-                            <label for="dark-auto" class="segmented-label">ស្វ័យប្រវត្តិ</label>
-                            
-                            <input type="radio" name="dark-mode-select" id="dark-light" value="light" class="hidden settings-radio">
-                            <label for="dark-light" class="segmented-label">ថ្ងៃ</label>
-                            
-                            <input type="radio" name="dark-mode-select" id="dark-dark" value="dark" class="hidden settings-radio">
-                            <label for="dark-dark" class="segmented-label">យប់</label>
-                        </div>
-                    </div>
+                      </div>
+                       <div>
+                            <label class="text-sm font-medium text-primary mb-2 block">ពណ៌ (ថ្ងៃ/យប់)</label>
+                            <div class="segmented-control">
+                                <input type="radio" name="dark-mode-select" id="dark-auto" value="auto" class="hidden settings-radio">
+                                <label for="dark-auto" class="segmented-label">ស្វ័យប្រវត្តិ</label>
+                                
+                                <input type="radio" name="dark-mode-select" id="dark-light" value="light" class="hidden settings-radio">
+                                <label for="dark-light" class="segmented-label">ថ្ងៃ</label>
+                                
+                                <input type="radio" name="dark-mode-select" id="dark-dark" value="dark" class="hidden settings-radio">
+                                <label for="dark-dark" class="segmented-label">យប់</label>
+                            </div>
+                       </div>
                     
-                    <!-- [MODIFIED] Style Selector (Fixed Khmer text) -->
-                    <div>
-                        <label for="theme-select" class="text-sm font-medium text-primary mb-2 block">ជ្រើសរើស Style</label>
-                        <select id="theme-select" class="settings-select">
-                            <option value="original">Style ដើម (Original)</option>
-                            <option value="glass">កញ្ចក់ថ្លា (Glass)</option>
-                            <option value="ocean">សមុទ្រ (Ocean)</option>
-                            <option value="forest">ព្រៃឈើ (Forest)</option>
-                            <!-- Add more theme options here -->
-                        </select>
-                    </div>
+                       <div>
+                            <label for="theme-select" class="text-sm font-medium text-primary mb-2 block">ជ្រើសរើស Style</label>
+                            <select id="theme-select" class="settings-select">
+                                <option value="original">Style ដើម (Original)</option>
+                                <option value="glass">កញ្ចក់ថ្លា (Glass)</option>
+                                <option value="ocean">សមុទ្រ (Ocean)</option>
+                                <option value="forest">ព្រៃឈើ (Forest)</option>
+                                </select>
+                       </div>
                 </div>
 
             </div>
 
         </div>
 
-        <!-- [MODIFIED] Footer Navigation Bar with theme classes -->
         <nav id="footer-nav" class="sticky bottom-0 w-full bg-primary border-t border-primary shadow-lg z-20">
             <div class="max-w-md mx-auto flex justify-around items-center h-16">
-                <!-- Filter: Pending -->
                 <button data-filter="pending" class="filter-nav-btn flex-1 flex justify-center items-center h-full text-center text-secondary hover:text-primary transition-colors duration-150">
                     <i class="fas fa-hourglass-half fa-lg"></i>
                 </button>
-                <!-- Filter: Approved -->
                 <button data-filter="approved" class="filter-nav-btn flex-1 flex justify-center items-center h-full text-center text-secondary hover:text-primary transition-colors duration-150">
                     <i class="fas fa-check-circle fa-lg"></i>
                 </button>
-                <!-- Filter: Rejected -->
                 <button data-filter="rejected" class="filter-nav-btn flex-1 flex justify-center items-center h-full text-center text-secondary hover:text-primary transition-colors duration-150">
                     <i class="fas fa-times-circle fa-lg"></i>
                 </button>
-                <!-- Filter: All -->
                 <button data-filter="all" class="filter-nav-btn flex-1 flex justify-center items-center h-full text-center text-secondary hover:text-primary transition-colors duration-150">
                     <i class="fas fa-grip-horizontal fa-lg"></i>
                 </button>
-                <!-- Page: Settings -->
                 <button data-filter="settings" class="filter-nav-btn flex-1 flex justify-center items-center h-full text-center text-secondary hover:text-primary transition-colors duration-150">
                     <i class="fas fa-cog fa-lg"></i>
                 </button>
             </div>
         </nav>
 
-    </div> <!-- End max-w-md -->
-
-     <!-- [MODIFIED] Custom Alert Modal with theme classes -->
-    <div id="custom-alert-modal" class="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50 hidden p-4">
+    </div> <div id="custom-alert-modal" class="fixed inset-0 z-[60] flex items-center justify-center bg-black bg-opacity-50 hidden p-4">
         <div class="card-bg p-6 rounded-lg shadow-xl w-full max-w-sm text-center">
             <svg id="custom-alert-icon-warning" xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-red-500 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"> <path stroke-linecap="round" stroke-linejoin="round" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" /> </svg>
             <svg id="custom-alert-icon-success" xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-green-500 hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"> <path stroke-linecap="round" stroke-linejoin="round" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" /> </svg>
@@ -1200,7 +184,6 @@
         </div>
     </div>
 
-    <!-- [MODIFIED] Confirmation Modal with theme classes -->
     <div id="confirmation-modal" class="fixed inset-0 z-[70] flex items-center justify-center bg-black bg-opacity-75 hidden p-4">
         <div class="card-bg p-6 rounded-lg shadow-xl w-full max-w-sm text-center">
             <svg xmlns="http://www.w3.org/2000/svg" class="h-12 w-12 mx-auto text-yellow-500" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2">
@@ -1215,20 +198,15 @@
         </div>
     </div>
 
-    <!-- [MODIFIED] Request Detail Modal with theme classes -->
     <div id="request-detail-modal" class="fixed inset-0 z-[65] flex items-center justify-center bg-black bg-opacity-60 hidden p-4">
         <div class="card-bg p-4 rounded-lg shadow-xl w-full max-w-md relative max-h-[80vh] overflow-y-auto">
-            <!-- Close Button -->
             <button id="detail-modal-close-btn" class="absolute top-2 right-2 text-secondary hover:text-primary bg-secondary dark:bg-gray-700 dark:hover:bg-gray-600 rounded-full w-7 h-7 flex items-center justify-center">
                 <i class="fas fa-times"></i>
             </button>
-            <!-- Content -->
             <div id="detail-modal-content" class="mt-6">
-                <!-- Details will be injected here by JS -->
-            </div>
+                </div>
         </div>
     </div>
-
 
 </body>
 </html>
