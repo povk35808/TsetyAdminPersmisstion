@@ -1,11 +1,14 @@
-import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
-import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
-import {
-    getFirestore, doc, updateDoc, deleteDoc, collection, query, where, onSnapshot, serverTimestamp, Timestamp, setLogLevel,
-} from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+// ### FILE: app.js (MODIFIED) ###
 
-// Enable Firestore debug logging
-setLogLevel('debug');
+// [បានបន្ថែម] Import មុខងារពី service ថ្មី
+import {
+    initializeFirebase,
+    handleAuth,
+    listenToRequests,
+    performAdminAction
+} from './firebase-service.js';
+
+// [បានលុប] Firebase imports ត្រូវបានផ្លាស់ទីទៅ service
 
 // --- Firebase Config ---
 const firebaseConfig = {
@@ -19,26 +22,23 @@ const firebaseConfig = {
 };
 
 // --- Global State & Element References ---
-let db, auth;
-let requestsUnsubscribe = null;
+// [បានលុប] db, auth, collection paths (ឥឡូវ​ស្ថិត​នៅ​ក្នុង service)
+// [បានលុប] requestsUnsubscribe (ឥឡូវ​ស្ថិត​នៅ​ក្នុង service)
+
 const ADMIN_NAME = "Admin Daro";
 let globalAllRequests = []; // For detail modal
-let allDepartments = new Set(); // [NEW] For department filter
-
-// --- Firestore Collection Path ---
-let leaveRequestsCollectionPath;
-let outRequestsCollectionPath;
+let allDepartments = new Set(); // For department filter
 
 // --- Element References ---
 let mainContentArea, requestListContainer, loadingIndicator, emptyPlaceholder, errorDisplay, footerNav;
 let settingsPage, toggleMonthFilter, toggleCompactView;
 let currentFilter = 'pending'; // Default filter
 
-// --- [NEW] Settings Elements ---
+// --- Settings Elements ---
 let approvedFilterRadios, toggleDepartmentFilter, departmentFilterContainer, departmentSelect;
 let darkModeRadios, themeSelect;
 
-// --- [MODIFIED] Settings State ---
+// --- Settings State ---
 let settings = {
     filterCurrentMonth: false,
     compactViewApproved: false,
@@ -59,10 +59,10 @@ let requestDetailModal, detailModalContent, detailModalCloseBtn;
 function formatFirestoreTimestamp(timestamp, format = 'HH:mm dd/MM/yyyy') {
      let date;
      if (!timestamp) return "";
-     if (timestamp instanceof Date) date = timestamp;
-     else if (timestamp.toDate) date = timestamp.toDate();
-     else if (typeof timestamp === 'string') { date = new Date(timestamp); if (isNaN(date.getTime())) return ""; }
+     if (timestamp.toDate) date = timestamp.toDate();
      else if (timestamp.seconds) date = new Date(timestamp.seconds * 1000);
+     else if (timestamp instanceof Date) date = timestamp;
+     else if (typeof timestamp === 'string') { date = new Date(timestamp); if (isNaN(date.getTime())) return ""; }
      else return "";
      const hours = String(date.getHours()).padStart(2, '0');
      const minutes = String(date.getMinutes()).padStart(2, '0');
@@ -74,12 +74,11 @@ function formatFirestoreTimestamp(timestamp, format = 'HH:mm dd/MM/yyyy') {
      return `${hours}:${minutes} ${day}/${month}/${year}`;
 }
 
-// --- [MODIFIED] Settings Functions ---
+// --- Settings Functions ---
 function loadSettings() {
     try {
         const savedSettings = localStorage.getItem('adminSettings');
         if (savedSettings) {
-            // Merge saved settings, keeping defaults for new/missing keys
             const parsed = JSON.parse(savedSettings);
             settings = { ...settings, ...parsed };
         }
@@ -88,25 +87,15 @@ function loadSettings() {
         localStorage.removeItem('adminSettings');
     }
     
-    // Update UI elements based on loaded settings
     if (toggleMonthFilter) toggleMonthFilter.checked = settings.filterCurrentMonth;
     if (toggleCompactView) toggleCompactView.checked = settings.compactViewApproved;
-    
-    // Approved filter
     if (approvedFilterRadios) approvedFilterRadios.forEach(radio => radio.checked = (radio.value === settings.approvedFilterType));
-
-    // Department filter
     if (toggleDepartmentFilter) toggleDepartmentFilter.checked = settings.filterByDepartment;
     if (departmentFilterContainer) departmentFilterContainer.classList.toggle('hidden', !settings.filterByDepartment);
     if (departmentSelect) departmentSelect.value = settings.selectedDepartment;
-
-    // Dark mode
     if (darkModeRadios) darkModeRadios.forEach(radio => radio.checked = (radio.value === settings.darkMode));
-    
-    // Theme
     if (themeSelect) themeSelect.value = settings.theme;
 
-    // Apply visual settings on load
     applyDarkMode();
     applyTheme();
 }
@@ -119,7 +108,7 @@ function saveSettings() {
     }
 }
  
-// --- [NEW] Dark Mode & Theme Functions ---
+// --- Dark Mode & Theme Functions ---
 function applyDarkMode() {
     const root = document.documentElement;
     if (settings.darkMode === 'auto') {
@@ -134,11 +123,9 @@ function applyDarkMode() {
  
 function applyTheme() {
     document.documentElement.dataset.theme = settings.theme;
-    // Show/hide bg image for glass theme
     document.getElementById('body-bg-image').classList.toggle('hidden', settings.theme !== 'glass');
 }
  
-// [NEW] Media query listener for auto dark mode
 window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', e => {
     if (settings.darkMode === 'auto') {
         applyDarkMode();
@@ -159,7 +146,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     toggleMonthFilter = document.getElementById('toggle-month-filter');
     toggleCompactView = document.getElementById('toggle-compact-view');
     
-    // --- [NEW] Assign Settings Elements ---
     approvedFilterRadios = document.querySelectorAll('input[name="approved-filter-type"]');
     toggleDepartmentFilter = document.getElementById('toggle-department-filter');
     departmentFilterContainer = document.getElementById('department-filter-container');
@@ -167,7 +153,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     darkModeRadios = document.querySelectorAll('input[name="dark-mode-select"]');
     themeSelect = document.getElementById('theme-select');
 
-    // --- Assign Modal Elements ---
     customAlertModal = document.getElementById('custom-alert-modal');
     customAlertTitle = document.getElementById('custom-alert-title');
     customAlertMessage = document.getElementById('custom-alert-message');
@@ -189,64 +174,51 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- Load Settings from localStorage ---
     loadSettings();
 
-    // --- Initialize Firebase ---
-    try {
-        if (!firebaseConfig.projectId) throw new Error("Firebase config is missing or invalid.");
-        const app = initializeApp(firebaseConfig);
-        db = getFirestore(app);
-        auth = getAuth(app);
+    // --- [កែសម្រួល] Initialize Firebase ---
+    const canvasAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+    const { success, error } = initializeFirebase(firebaseConfig, canvasAppId);
 
-        const canvasAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        leaveRequestsCollectionPath = `/artifacts/${canvasAppId}/public/data/leave_requests`;
-        outRequestsCollectionPath = `/artifacts/${canvasAppId}/public/data/out_requests`;
-        console.log("Admin App Using Firestore Leave Path:", leaveRequestsCollectionPath);
-        console.log("Admin App Using Firestore Out Path:", outRequestsCollectionPath);
-
-        // --- Firebase Authentication ---
-         onAuthStateChanged(auth, (user) => {
-             if (user) {
-                 console.log("Admin App: Signed in. UID:", user.uid);
-                 setupRequestListener(currentFilter); // Use default filter
-                 updateActiveNavButton(currentFilter); // Highlight active button
-             } else {
-                 console.log("Admin App: No user. Attempting anonymous sign-in...");
-                 signInAnonymously(auth).catch(anonError => {
-                     console.error("Admin App: Anonymous Sign-In Error:", anonError);
-                     showError(`Critical Error: មិនអាច Sign In បានទេ។ ${anonError.message}។`);
-                 });
-             }
-         });
-
-    } catch (e) {
-        console.error("Firebase Initialization Error:", e);
-        showError(`Critical Error: មិនអាច​តភ្ជាប់ Firebase បាន​ទេ។ ${e.message}។ សូម Refresh ម្ដងទៀត។`);
+    if (!success) {
+        showError(`Critical Error: មិនអាច​តភ្ជាប់ Firebase បាន​ទេ។ ${error.message}។ សូម Refresh ម្ដងទៀត។`);
+        return;
     }
 
+    // --- [កែសម្រួល] Firebase Authentication ---
+    handleAuth(
+        (user) => {
+            // OnUser
+            setupRequestListener(currentFilter); // Use default filter
+            updateActiveNavButton(currentFilter); // Highlight active button
+        },
+        (anonError) => {
+            // OnNoUser (Sign-in failed)
+            showError(`Critical Error: មិនអាច Sign In បានទេ។ ${anonError.message}។`);
+        }
+    );
+    
     // --- Footer Navigation Listener ---
     if (footerNav) {
         footerNav.addEventListener('click', (event) => {
             const navButton = event.target.closest('.filter-nav-btn');
-            if (navButton && navButton.dataset.filter) {
-                const newFilter = navButton.dataset.filter;
+            if (!navButton || !navButton.dataset.filter) return;
+
+            const newFilter = navButton.dataset.filter;
+            
+            if (newFilter === 'settings') {
+                if (mainContentArea) mainContentArea.classList.add('hidden');
+                if (settingsPage) settingsPage.classList.remove('hidden');
+                currentFilter = 'settings';
+            } else {
+                if (mainContentArea) mainContentArea.classList.remove('hidden');
+                if (settingsPage) settingsPage.classList.add('hidden');
                 
-                // Handle Settings Page
-                if (newFilter === 'settings') {
-                    if (mainContentArea) mainContentArea.classList.add('hidden');
-                    if (settingsPage) settingsPage.classList.remove('hidden');
-                    currentFilter = 'settings';
-                } else {
-                    // Handle Request List Pages
-                    if (mainContentArea) mainContentArea.classList.remove('hidden');
-                    if (settingsPage) settingsPage.classList.add('hidden');
-                    
-                    if (newFilter !== currentFilter) {
-                        console.log("Filter changed to:", newFilter);
-                        currentFilter = newFilter;
-                        setupRequestListener(currentFilter);
-                    }
+                if (newFilter !== currentFilter) {
+                    console.log("Filter changed to:", newFilter);
+                    currentFilter = newFilter;
+                    setupRequestListener(currentFilter); // Re-fetch data
                 }
-                updateActiveNavButton(currentFilter);
             }
+            updateActiveNavButton(currentFilter);
         });
     }
 
@@ -257,33 +229,33 @@ document.addEventListener('DOMContentLoaded', async () => {
             const compactCard = event.target.closest('.compact-card-btn');
             
             if (actionButton) {
-                promptForAdminAction(actionButton); // Pass the button
+                promptForAdminAction(actionButton);
             } else if (compactCard) {
                 const { id, type } = compactCard.dataset;
                 const request = globalAllRequests.find(r => r.id === id && r.type === type);
-                if (request) {
-                    showRequestDetailModal(request);
-                }
+                if (request) showRequestDetailModal(request);
             }
         });
     }
-
 
     // --- Listeners for Modals ---
     if (customAlertOkBtn) customAlertOkBtn.addEventListener('click', hideCustomAlert);
     if (confirmNoBtn) confirmNoBtn.addEventListener('click', () => confirmationModal.classList.add('hidden'));
     if (detailModalCloseBtn) detailModalCloseBtn.addEventListener('click', hideRequestDetailModal);
-    if (requestDetailModal) requestDetailModal.addEventListener('click', (e) => { if(e.target === requestDetailModal) hideRequestDetailModal(); }); // Hide on backdrop click
+    if (requestDetailModal) requestDetailModal.addEventListener('click', (e) => { if(e.target === requestDetailModal) hideRequestDetailModal(); });
 
+    // [កែសម្រួល] Confirmation 'Yes' button now calls the refactored function
     if (confirmYesBtn) {
         confirmYesBtn.addEventListener('click', () => {
             const { id, type, action } = confirmYesBtn.dataset;
-            if (id && type && action) executeAdminAction(id, type, action); 
+            if (id && type && action) {
+                executeAdminAction(id, type, action); // Call the UI-side function
+            }
             confirmationModal.classList.add('hidden');
         });
     }
 
-    // --- [MODIFIED] Listeners for Settings Toggles ---
+    // --- Listeners for Settings Toggles ---
     if (toggleMonthFilter) {
         toggleMonthFilter.addEventListener('change', (e) => {
             settings.filterCurrentMonth = e.target.checked;
@@ -298,8 +270,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (currentFilter === 'approved') sortAndRenderRequests(globalAllRequests, currentFilter);
         });
     }
-
-    // --- [NEW] Listeners for New Settings ---
     if (approvedFilterRadios) {
         approvedFilterRadios.forEach(radio => radio.addEventListener('change', (e) => {
             if (e.target.checked) {
@@ -309,22 +279,18 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }));
     }
-
     if (toggleDepartmentFilter) {
         toggleDepartmentFilter.addEventListener('change', (e) => {
             settings.filterByDepartment = e.target.checked;
             departmentFilterContainer.classList.toggle('hidden', !settings.filterByDepartment);
-            saveSettings();
-            // if disabled, reset filter and re-fetch
             if (!settings.filterByDepartment) {
                 settings.selectedDepartment = 'all';
                 departmentSelect.value = 'all';
-                saveSettings();
             }
+            saveSettings();
             if (currentFilter !== 'settings') setupRequestListener(currentFilter);
         });
     }
-
     if (departmentSelect) {
         departmentSelect.addEventListener('change', (e) => {
             settings.selectedDepartment = e.target.value;
@@ -332,7 +298,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             if (currentFilter !== 'settings') setupRequestListener(currentFilter);
         });
     }
-
     if (darkModeRadios) {
         darkModeRadios.forEach(radio => radio.addEventListener('change', (e) => {
             if (e.target.checked) {
@@ -342,7 +307,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             }
         }));
     }
-
     if (themeSelect) {
         themeSelect.addEventListener('change', (e) => {
             settings.theme = e.target.value;
@@ -350,7 +314,6 @@ document.addEventListener('DOMContentLoaded', async () => {
             applyTheme();
         });
     }
-
 }); // End DOMContentLoaded
 
 // --- Update Active Nav Button ---
@@ -358,33 +321,30 @@ function updateActiveNavButton(activeFilter) {
     if (!footerNav) return;
     const buttons = footerNav.querySelectorAll('.filter-nav-btn');
     buttons.forEach(btn => {
-        if (btn.dataset.filter === activeFilter) {
-            btn.classList.add('text-primary', 'bg-secondary');
-            btn.classList.remove('text-secondary');
-        } else {
-            btn.classList.remove('text-primary', 'bg-secondary');
-            btn.classList.add('text-secondary');
-        }
+        btn.classList.toggle('text-primary', btn.dataset.filter === activeFilter);
+        btn.classList.toggle('bg-secondary', btn.dataset.filter === activeFilter);
+        btn.classList.toggle('text-secondary', btn.dataset.filter !== activeFilter);
     });
 }
 
-
 // --- Show Error Message ---
 function showError(message) {
-    if (errorDisplay) { errorDisplay.textContent = message; errorDisplay.classList.remove('hidden'); }
+    // Check if message is an error object
+    const errorText = (message instanceof Error) ? message.message : message;
+
+    if (errorDisplay) { errorDisplay.textContent = errorText; errorDisplay.classList.remove('hidden'); }
     if (loadingIndicator) loadingIndicator.classList.add('hidden');
     if (requestListContainer) requestListContainer.innerHTML = '';
     if (emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
 }
 
-// --- [NEW] Populate Department Filter Dropdown ---
+// --- Populate Department Filter Dropdown ---
 function populateDepartmentDropdown() {
     if (!departmentSelect) return;
     const currentVal = departmentSelect.value;
-    // Clear old options (except 'All')
     departmentSelect.innerHTML = '<option value="all">-- គ្រប់ផ្នែកទាំងអស់ --</option>';
     
-    const sortedDepartments = [...allDepartments].filter(d => d).sort(); // Filter out null/empty and sort
+    const sortedDepartments = [...allDepartments].filter(d => d).sort(); 
     
     sortedDepartments.forEach(dept => {
         const option = document.createElement('option');
@@ -392,15 +352,13 @@ function populateDepartmentDropdown() {
         option.textContent = dept;
         departmentSelect.appendChild(option);
     });
-    // Restore previous selection if it still exists
     departmentSelect.value = currentVal;
 }
 
-// --- Setup Firestore Listener ---
+// --- [កែសម្រួល] Setup Firestore Listener ---
+// This function now calls the service and handles the *response*
 function setupRequestListener(statusFilter = 'pending') {
     console.log(`Setting up listener for status: ${statusFilter}`);
-    if (requestsUnsubscribe) { console.log("Unsubscribing previous listener."); requestsUnsubscribe(); }
-    if (!db) { showError("Firestore is not initialized."); return; }
 
     if (loadingIndicator) loadingIndicator.classList.remove('hidden');
     if (emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
@@ -409,125 +367,78 @@ function setupRequestListener(statusFilter = 'pending') {
     
     const initialDepartmentCount = allDepartments.size;
 
-    const collectionsToQuery = [leaveRequestsCollectionPath, outRequestsCollectionPath];
-    let allRequests = [];
-    let initialLoadsPending = collectionsToQuery.length;
-    requestsUnsubscribe = () => { listeners.forEach(unsub => unsub()); };
-    const listeners = [];
-
-    collectionsToQuery.forEach(collectionPath => {
-        let q;
-        const baseCollectionRef = collection(db, collectionPath);
-        if (statusFilter === 'all') q = query(baseCollectionRef);
-        else if (statusFilter === 'pending') q = query(baseCollectionRef, where('status', 'in', ['pending', 'editing']));
-        else q = query(baseCollectionRef, where('status', '==', statusFilter));
-
-        const unsubscribe = onSnapshot(q, (snapshot) => {
-            console.log(`Snapshot received for ${collectionPath.split('/').pop()}, Status: ${statusFilter}, Size: ${snapshot.size}`);
-            const type = collectionPath.includes('leave_requests') ? 'leave' : 'out';
+    listenToRequests(
+        statusFilter,
+        settings,
+        // onDataUpdate callback
+        (requests, newDepartments, initialLoadsPending) => {
+            allDepartments = newDepartments; // Update global set
             
-            let currentDocs = [];
-            snapshot.forEach(doc => { 
-                const data = doc.data();
-                currentDocs.push({ ...data, id: doc.id, type: type }); 
-                // [NEW] Collect departments
-                if(data.department) allDepartments.add(data.department);
-            });
-
-            // [MODIFIED] Apply client-side filters
-            
-            // 1. Month filter
-            if (settings.filterCurrentMonth) {
-                const now = new Date();
-                const currentMonthYear = `${String(now.getMonth() + 1).padStart(2, '0')}/${now.getFullYear()}`; // e.g., "11/2025"
-                
-                currentDocs = currentDocs.filter(doc => {
-                    const startsInMonth = doc.startDate && doc.startDate.endsWith(currentMonthYear);
-                    const endsInMonth = doc.endDate && doc.endDate.endsWith(currentMonthYear);
-                    return startsInMonth || endsInMonth;
-                });
-                console.log(`Client-side month filter (${currentMonthYear}) applied: ${currentDocs.length} results.`);
-            }
-            
-            // 2. [NEW] Approved Type filter (only on 'approved' page)
-            if (currentFilter === 'approved' && settings.approvedFilterType !== 'all') {
-                currentDocs = currentDocs.filter(doc => doc.type === settings.approvedFilterType);
-            }
-            
-            // 3. [NEW] Department filter (if enabled)
-            if (settings.filterByDepartment && settings.selectedDepartment !== 'all') {
-                currentDocs = currentDocs.filter(doc => doc.department === settings.selectedDepartment);
-            }
-            // End client-side filters
-
-            allRequests = allRequests.filter(req => req.type !== type).concat(currentDocs);
-            sortAndRenderRequests(allRequests, statusFilter);
+            sortAndRenderRequests(requests, statusFilter); // Render the filtered data
             
             if (initialLoadsPending > 0) {
-                initialLoadsPending--;
-                if (initialLoadsPending === 0) {
-                    if (loadingIndicator) loadingIndicator.classList.add('hidden');
-                    if(allRequests.length === 0 && emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
-                }
+                 if (loadingIndicator) loadingIndicator.classList.add('hidden');
+            }
+
+            if(requests.length === 0 && loadingIndicator.classList.contains('hidden')) {
+                if (emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
             }
             
-            // [NEW] If department list grew, populate dropdown
             if (allDepartments.size > initialDepartmentCount) {
                 populateDepartmentDropdown();
             }
-            
-        }, (error) => {
-            console.error(`Error listening to ${collectionPath}:`, error);
-            if (error.code === 'failed-precondition' && error.message.includes('index')) showError(`Error: Firestore index required for this query on ${collectionPath.split('/').pop()}. Please check console for link to create index, or simplify query.`);
-            else showError(`Error loading ${collectionPath.split('/').pop()}: ${error.message}. Check Firestore Rules.`);
-            if (initialLoadsPending > 0) { initialLoadsPending--; if (initialLoadsPending === 0 && loadingIndicator) loadingIndicator.classList.add('hidden'); }
-        });
-        listeners.push(unsubscribe);
-    });
+        },
+        // onError callback
+        (error) => {
+            console.error(`Error listening to requests:`, error);
+            if (error.code === 'failed-precondition' && error.message.includes('index')) {
+                showError(`Error: Firestore index required. Please check console for link to create index.`);
+            } else {
+                showError(`Error loading data: ${error.message}. Check Firestore Rules.`);
+            }
+            if (loadingIndicator) loadingIndicator.classList.add('hidden');
+        }
+    );
 }
 
 // --- Sort and Render Combined Requests ---
  function sortAndRenderRequests(requests, currentFilter) {
-     globalAllRequests = [...requests]; // [NEW] Store for detail modal
+     globalAllRequests = [...requests]; // Store for detail modal
      
      requests.sort((a, b) => {
          const statusPriority = { 'pending': 1, 'editing': 2, 'approved': 3, 'rejected': 4 };
          const priorityA = statusPriority[a.status] || 5;
          const priorityB = statusPriority[b.status] || 5;
-         if (currentFilter !== 'approved' && currentFilter !== 'rejected' && priorityA !== priorityB) return priorityA - priorityB;
-         const timeA = a.requestedAt?.toMillis() ?? 0;
-         const timeB = b.requestedAt?.toMillis() ?? 0;
-         return (currentFilter === 'pending') ? timeA - timeB : timeB - timeA;
+         if (currentFilter !== 'approved' && currentFilter !== 'rejected' && priorityA !== priorityB) {
+             return priorityA - priorityB;
+         }
+         const timeA = a.requestedAt?.toMillis() ?? a.requestedAt?.seconds ?? 0;
+         const timeB = b.requestedAt?.toMillis() ?? b.requestedAt?.seconds ?? 0;
+         return (currentFilter === 'pending') ? (timeA - timeB) : (timeB - timeA);
      });
      renderRequestList(requests);
  }
 
 // --- Render Request List ---
 function renderRequestList(requests) {
-    if (!requestListContainer || !loadingIndicator || !emptyPlaceholder) return;
+    if (!requestListContainer) return;
     
-    // [MODIFIED] Check for Compact View
     const isCompact = (currentFilter === 'approved' && settings.compactViewApproved);
     
-    // Set container class
-    requestListContainer.className = isCompact 
-        ? "grid grid-cols-3 gap-2 pb-20" // 3-col grid
-        : "space-y-4 pb-20"; // Reset to single col
+    requestListContainer.className = isCompact ? "grid grid-cols-3 gap-2 pb-20" : "space-y-4 pb-20";
 
     if (requests.length === 0) {
-        if (loadingIndicator && loadingIndicator.classList.contains('hidden') && emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
-        requestListContainer.innerHTML = ''; // Clear grid/space classes if empty
+        if(emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
+        requestListContainer.innerHTML = '';
     } else {
         if(emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
-        // Render correct card type
         requestListContainer.innerHTML = requests.map(req => 
             isCompact ? renderCompactCard(req) : renderRequestCard(req)
         ).join('');
     }
 }
  
-// --- [NEW] Render Compact Card ---
-// --- [BUG FIX] Changed 'classclass' to 'class' ---
+// --- Render Compact Card ---
 function renderCompactCard(request) {
     const typeText = request.type === 'leave' ? 'ច្បាប់ឈប់' : 'ចេញក្រៅ';
     const typeColor = request.type === 'leave' ? 'bg-blue-100 text-blue-800' : 'bg-green-100 text-green-800';
@@ -573,8 +484,6 @@ function renderRequestCard(request) {
                 </div>`;
             break;
     }
-
-    // [NEW] Use helper function to get inner HTML
     const detailHtml = getRequestDetailHtml(request, deleteButton); 
 
     return `
@@ -584,7 +493,7 @@ function renderRequestCard(request) {
         </div>`;
 }
  
-// --- [NEW] Helper to generate detail HTML for Full Card and Modal ---
+// --- Helper to generate detail HTML for Full Card and Modal ---
 function getRequestDetailHtml(request, extraHeaderHtml = '') {
     if (!request || !request.id) return '';
 
@@ -627,7 +536,6 @@ function getRequestDetailHtml(request, extraHeaderHtml = '') {
                 ${extraHeaderHtml}
             </div>
         </div>
-        
         <div class="mb-3 flex items-center gap-3">
             <div class="flex-shrink-0">
                 ${ request.photo
@@ -640,7 +548,6 @@ function getRequestDetailHtml(request, extraHeaderHtml = '') {
                 <p class="text-sm text-secondary">${request.department || 'N/A'}</p>
             </div>
         </div>
-
         <div class="text-sm space-y-1.5 mb-3">
             <div class="flex"><strong class="font-medium text-secondary w-20 inline-block shrink-0"><i class="far fa-calendar-alt fa-fw mr-1.5 text-blue-500"></i>កាលបរិច្ឆេទ:</strong> <span class="text-primary">${dateString}</span></div>
             <div class="flex"><strong class="font-medium text-secondary w-20 inline-block shrink-0"><i class="far fa-clock fa-fw mr-1.5 text-blue-500"></i>រយៈពេល:</strong> <span class="text-primary">${request.duration || 'N/A'}</span></div>
@@ -652,129 +559,96 @@ function getRequestDetailHtml(request, extraHeaderHtml = '') {
     `;
 }
 
-// --- [NEW] Show/Hide Request Detail Modal ---
+// --- Show/Hide Request Detail Modal ---
 function showRequestDetailModal(request) {
     if (!requestDetailModal || !detailModalContent) return;
-    // Generate detail HTML (without delete button in the modal)
     detailModalContent.innerHTML = getRequestDetailHtml(request, '');
     requestDetailModal.classList.remove('hidden');
 }
 function hideRequestDetailModal() {
     if (requestDetailModal) requestDetailModal.classList.add('hidden');
-    if (detailModalContent) detailModalContent.innerHTML = ''; // Clear content
+    if (detailModalContent) detailModalContent.innerHTML = '';
 }
 
 
 // --- Prompt for Admin Action (Handles Approve/Reject/Delete) ---
-function promptForAdminAction(button) { // Now accepts the button element
+function promptForAdminAction(button) {
     if (!button) return;
+    const { id, type, action } = button.dataset;
 
-    const requestId = button.dataset.id;
-    const requestType = button.dataset.type;
-    const action = button.dataset.action;
+    if (!id || !type || !action || !confirmationModal) return;
 
-    if (!requestId || !requestType || !action || !confirmationModal || !confirmYesBtn || !confirmationTitle || !confirmationMessage) {
-        console.error("Missing data attributes or modal references.");
-        return;
-    }
-
-    // --- Store data on the 'Yes' button ---
-    confirmYesBtn.dataset.id = requestId;
-    confirmYesBtn.dataset.type = requestType;
+    confirmYesBtn.dataset.id = id;
+    confirmYesBtn.dataset.type = type;
     confirmYesBtn.dataset.action = action;
 
-    // --- Customize modal for action ---
     if (action === 'approve') {
         confirmationTitle.textContent = "បញ្ជាក់ការអនុម័ត";
-        confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "អនុម័ត" សំណើ (ID: ${requestId}) នេះមែនទេ?`;
+        confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "អនុម័ត" សំណើ (ID: ${id}) នេះមែនទេ?`;
         confirmYesBtn.className = "bg-green-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500 focus:ring-offset-2";
         confirmYesBtn.textContent = "បាទ/ចាស, អនុម័ត";
     } else if (action === 'reject') {
         confirmationTitle.textContent = "បញ្ជាក់ការបដិសេធ";
-        confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "បដិសេធ" សំណើ (ID: ${requestId}) នេះមែនទេ?`;
+        confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "បដិសេធ" សំណើ (ID: ${id}) នេះមែនទេ?`;
         confirmYesBtn.className = "bg-red-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2";
         confirmYesBtn.textContent = "បាទ/ចាស, បដិសេធ";
     } else if (action === 'delete') {
         confirmationTitle.textContent = "បញ្ជាក់ការលុប";
-        confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "លុប" សំណើ (ID: ${requestId}) នេះមែនទេ?\n\nចំណាំ៖ ទិន្នន័យនេះនឹងបាត់បង់ជាអចិន្ត្រៃយ៍។`;
+        confirmationMessage.textContent = `តើអ្នកប្រាកដជាចង់ "លុប" សំណើ (ID: ${id}) នេះមែនទេ?\n\nចំណាំ៖ ទិន្នន័យនេះនឹងបាត់បង់ជាអចិន្ត្រៃយ៍។`;
         confirmYesBtn.className = "bg-red-600 text-white py-2 px-6 rounded-lg font-semibold shadow-md hover:bg-red-700 focus:outline-none focus:ring-2 focus:ring-red-500 focus:ring-offset-2";
         confirmYesBtn.textContent = "បាទ/ចាស, លុប";
     }
     
-    // --- Show the modal ---
     confirmationModal.classList.remove('hidden');
 }
 
 
-// --- Execute Admin Action (Handles Approve/Reject/Delete) ---
+// --- [កែសម្រួល] Execute Admin Action (UI part) ---
+// This function now handles the UI (loading button) and calls the service
 async function executeAdminAction(requestId, requestType, action) {
-    
-    if (!requestId || !requestType || !action) { 
-        console.error("executeAdminAction called with missing parameters."); 
-        return; 
-    }
-    
     console.log(`Executing Action: ${action}, Type: ${requestType}, ID: ${requestId}`);
 
+    // Find the original button that was clicked (Approve/Reject/Delete)
     const originalButton = document.querySelector(`.action-btn[data-id="${requestId}"][data-action="${action}"]`);
+    let originalButtonHtml = '';
+    
     if (originalButton) {
+        originalButtonHtml = originalButton.innerHTML; // Save original content
         originalButton.disabled = true;
-        originalButton.innerHTML = `<i class="fas fa-spinner fa-spin"></i>`;
-        if (action !== 'delete') {
-           originalButton.innerHTML = `<i class="fas fa-spinner fa-spin mr-1"></i> កំពុងដំណើរការ...`;
-        }
-    } else {
-        console.warn(`Could not find button for ${requestId} to disable.`);
+        originalButton.innerHTML = (action === 'delete') 
+            ? `<i class="fas fa-spinner fa-spin"></i>`
+            : `<i class="fas fa-spinner fa-spin mr-1"></i> កំពុងដំណើរការ...`;
     }
 
-    const collectionPath = requestType === 'leave' ? leaveRequestsCollectionPath : outRequestsCollectionPath;
-    const docRef = doc(db, collectionPath, requestId);
-
     try {
-        if (action === 'approve' || action === 'reject') {
-            const updateData = { 
-                status: action === 'approve' ? 'approved' : 'rejected', 
-                decisionAt: serverTimestamp(), 
-                decisionBy: ADMIN_NAME 
-            };
-            await updateDoc(docRef, updateData);
-            console.log(`Request ${requestId} successfully ${action}d.`);
-            showCustomAlert("ជោគជ័យ!", `សំណើ (${requestId}) ត្រូវបាន ${action === 'approve' ? 'អនុម័ត' : 'បដិសេធ'} ដោយជោគជ័យ។`, "success");
+        // [កែសម្រួល] Call the service function
+        await performAdminAction(requestId, requestType, action, ADMIN_NAME);
         
-        } else if (action === 'delete') {
-            await deleteDoc(docRef);
-            console.log(`Request ${requestId} successfully deleted.`);
-            showCustomAlert("បានលុប!", `សំណើ (${requestId}) ត្រូវបានលុបចេញពីមូលដ្ឋានទិន្នន័យ។`, "success");
-        }
-    
+        console.log(`Request ${requestId} successfully ${action}d.`);
+        const successMessage = (action === 'approve') ? 'អនុម័ត' : (action === 'reject') ? 'បដិសេធ' : 'លុប';
+        showCustomAlert("ជោគជ័យ!", `សំណើ (${requestId}) ត្រូវបាន ${successMessage} ដោយជោគជ័យ។`, "success");
+        
+        // Note: The button is removed by the real-time render, so we don't need to re-enable it on success.
+        
     } catch (error) {
         console.error(`Error ${action}ing request ${requestId}:`, error);
         showCustomAlert("Error", `មានបញ្ហា ${action} សំណើ: ${error.message}`);
         
+        // Re-enable the button ONLY if an error occurred
         if (originalButton) {
-            originalButton.disabled = false; 
-            if (action === 'approve') originalButton.innerHTML = `<i class="fas fa-check fa-fw"></i> អនុម័ត`;
-            else if (action === 'reject') originalButton.innerHTML = `<i class="fas fa-times fa-fw"></i> បដិសេធ`;
-            else if (action === 'delete') originalButton.innerHTML = `<i class="fas fa-trash-alt fa-fw"></i>`;
+            originalButton.disabled = false;
+            originalButton.innerHTML = originalButtonHtml;
         }
     }
 }
 
 // --- Custom Alert Modal Logic ---
 function showCustomAlert(title, message, type = 'warning') { 
-    if (!customAlertModal || !customAlertTitle || !customAlertMessage || !customAlertIconSuccess || !customAlertIconWarning) {
-         console.error("Custom alert elements not found.");
-         return; 
-    }
+    if (!customAlertModal) return; 
     customAlertTitle.textContent = title; 
     customAlertMessage.textContent = message; 
-    if (type === 'success') { 
-        customAlertIconSuccess.classList.remove('hidden'); 
-        customAlertIconWarning.classList.add('hidden'); 
-    } else { 
-        customAlertIconSuccess.classList.add('hidden'); 
-        customAlertIconWarning.classList.remove('hidden'); 
-    } 
+    customAlertIconSuccess.classList.toggle('hidden', type !== 'success'); 
+    customAlertIconWarning.classList.toggle('hidden', type === 'success'); 
     customAlertModal.classList.remove('hidden'); 
 }
 function hideCustomAlert() { 
