@@ -1,6 +1,5 @@
 // ### FILE: app.js (MODIFIED) ###
 
-// [បានបន្ថែម] Import មុខងារពី service ថ្មី
 import {
     initializeFirebase,
     handleAuth,
@@ -169,7 +168,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     // --- Load Settings from localStorage ---
     loadSettings();
 
-    // --- [កែសម្រួល] Initialize Firebase ---
+    // --- Initialize Firebase ---
     const canvasAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
     const { success, error } = initializeFirebase(firebaseConfig, canvasAppId);
 
@@ -178,15 +177,15 @@ document.addEventListener('DOMContentLoaded', async () => {
         return;
     }
 
-    // --- [កែសម្រួល] Firebase Authentication ---
+    // --- Firebase Authentication ---
     handleAuth(
         (user) => {
             // OnUser
-            setupRequestListener(currentFilter); // Use default filter
-            updateActiveNavButton(currentFilter); // Highlight active button
+            setupRequestListener(currentFilter); 
+            updateActiveNavButton(currentFilter);
         },
         (anonError) => {
-            // OnNoUser (Sign-in failed)
+            // OnNoUser
             showError(`Critical Error: មិនអាច Sign In បានទេ។ ${anonError.message}។`);
         }
     );
@@ -210,7 +209,7 @@ document.addEventListener('DOMContentLoaded', async () => {
                 if (newFilter !== currentFilter) {
                     console.log("Filter changed to:", newFilter);
                     currentFilter = newFilter;
-                    setupRequestListener(currentFilter); // Re-fetch data
+                    setupRequestListener(currentFilter); 
                 }
             }
             updateActiveNavButton(currentFilter);
@@ -239,11 +238,26 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (detailModalCloseBtn) detailModalCloseBtn.addEventListener('click', hideRequestDetailModal);
     if (requestDetailModal) requestDetailModal.addEventListener('click', (e) => { if(e.target === requestDetailModal) hideRequestDetailModal(); });
 
-    // [កែសម្រួល] Confirmation 'Yes' button now calls the refactored function
+    // [*** បន្ថែមថ្មី ***] Listener សម្រាប់ប៊ូតុងលុប (Delete) នៅក្នុង Detail Modal
+    if (detailModalContent) {
+        detailModalContent.addEventListener('click', (event) => {
+            const actionButton = event.target.closest('.action-btn');
+            // ត្រូវប្រាកដថាវាជាប៊ូតុង 'delete'
+            if (actionButton && actionButton.dataset.action === 'delete') {
+                promptForAdminAction(actionButton);
+            }
+        });
+    }
+
+    // [*** កែសម្រួល ***] Listener សម្រាប់ប៊ូតុង 'Yes' ក្នុង Confirmation Modal
     if (confirmYesBtn) {
         confirmYesBtn.addEventListener('click', () => {
             const { id, type, action } = confirmYesBtn.dataset;
             if (id && type && action) {
+                // [កែសម្រួល] លាក់ Detail Modal (ប្រសិនបើវាកំពុងបើក) មុនពេលដំណើរការ
+                if (requestDetailModal && !requestDetailModal.classList.contains('hidden')) {
+                    hideRequestDetailModal();
+                }
                 executeAdminAction(id, type, action); // Call the UI-side function
             }
             confirmationModal.classList.add('hidden');
@@ -324,9 +338,7 @@ function updateActiveNavButton(activeFilter) {
 
 // --- Show Error Message ---
 function showError(message) {
-    // Check if message is an error object
     const errorText = (message instanceof Error) ? message.message : message;
-
     if (errorDisplay) { errorDisplay.textContent = errorText; errorDisplay.classList.remove('hidden'); }
     if (loadingIndicator) loadingIndicator.classList.add('hidden');
     if (requestListContainer) requestListContainer.innerHTML = '';
@@ -338,9 +350,7 @@ function populateDepartmentDropdown() {
     if (!departmentSelect) return;
     const currentVal = departmentSelect.value;
     departmentSelect.innerHTML = '<option value="all">-- គ្រប់ផ្នែកទាំងអស់ --</option>';
-    
     const sortedDepartments = [...allDepartments].filter(d => d).sort(); 
-    
     sortedDepartments.forEach(dept => {
         const option = document.createElement('option');
         option.value = dept;
@@ -350,8 +360,7 @@ function populateDepartmentDropdown() {
     departmentSelect.value = currentVal;
 }
 
-// --- [កែសម្រួល] Setup Firestore Listener ---
-// This function now calls the service and handles the *response*
+// --- Setup Firestore Listener ---
 function setupRequestListener(statusFilter = 'pending') {
     console.log(`Setting up listener for status: ${statusFilter}`);
 
@@ -367,18 +376,15 @@ function setupRequestListener(statusFilter = 'pending') {
         settings,
         // onDataUpdate callback
         (requests, newDepartments, initialLoadsPending) => {
-            allDepartments = newDepartments; // Update global set
-            
-            sortAndRenderRequests(requests, statusFilter); // Render the filtered data
+            allDepartments = newDepartments;
+            sortAndRenderRequests(requests, statusFilter); 
             
             if (initialLoadsPending > 0) {
                  if (loadingIndicator) loadingIndicator.classList.add('hidden');
             }
-
             if(requests.length === 0 && loadingIndicator.classList.contains('hidden')) {
                 if (emptyPlaceholder) emptyPlaceholder.classList.remove('hidden');
             }
-            
             if (allDepartments.size > initialDepartmentCount) {
                 populateDepartmentDropdown();
             }
@@ -398,8 +404,7 @@ function setupRequestListener(statusFilter = 'pending') {
 
 // --- Sort and Render Combined Requests ---
  function sortAndRenderRequests(requests, currentFilter) {
-     globalAllRequests = [...requests]; // Store for detail modal
-     
+     globalAllRequests = [...requests]; 
      requests.sort((a, b) => {
          const statusPriority = { 'pending': 1, 'editing': 2, 'approved': 3, 'rejected': 4 };
          const priorityA = statusPriority[a.status] || 5;
@@ -417,9 +422,7 @@ function setupRequestListener(statusFilter = 'pending') {
 // --- Render Request List ---
 function renderRequestList(requests) {
     if (!requestListContainer) return;
-    
     const isCompact = (currentFilter === 'approved' && settings.compactViewApproved);
-    
     requestListContainer.className = isCompact ? "grid grid-cols-3 gap-2 pb-20" : "space-y-4 pb-20";
 
     if (requests.length === 0) {
@@ -454,37 +457,12 @@ function renderCompactCard(request) {
     `;
 }
 
-// --- [*** កែសម្រួលនៅទីនេះ ***] ---
-// --- Render Single Request Card (Full Detail) ---
-function renderRequestCard(request) {
-    if (!request || !request.id) return '';
-    
-    // --- [កែសម្រួល] Logic សម្រាប់ប៊ូតុង អនុម័ត/បដិសេធ ---
-    let actionButtons = '';
-    if (request.status === 'pending') {
-        // 1. (Part 1) បង្ហាញប៊ូតុងសម្រាប់តែ 'pending'
-        actionButtons = `
-            <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
-                <button data-id="${request.id}" data-type="${request.type}" data-action="approve" class="flex-1 action-btn bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
-                    <i class="fas fa-check fa-fw"></i> អនុម័ត
-                </button>
-                <button data-id="${request.id}" data-type="${request.type}" data-action="reject" class="flex-1 action-btn bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
-                    <i class="fas fa-times fa-fw"></i> បដិសេធ
-                </button>
-            </div>`;
-    } else if (request.status === 'editing') {
-        // 2. (Part 1) បង្ហាញសារ 'disabled' ពេល 'editing'
-        actionButtons = `
-            <div class="mt-4 pt-3 border-t border-primary text-center">
-                <p class="text-xs text-yellow-600 dark:text-yellow-400 italic p-2 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
-                    <i class="fas fa-exclamation-triangle fa-fw"></i> បុគ្គលិកកំពុងកែសម្រួល។ មិនអាចអនុម័ត/បដិសេធបានទេ។
-                </p>
-            </div>`;
-    }
-    // 3. សម្រាប់ 'approved'/'rejected' គឺ actionButtons = '' (ត្រឹមត្រូវ)
-
-    
-    // --- [កែសម្រួល] Logic សម្រាប់ប៊ូតុងលុប (Delete Button) ---
+// --- [*** បង្កើត Function ថ្មី ***] ---
+/**
+ * ពិនិត្យមើល Logic សម្រាប់ប៊ូតុងលុប (Delete Button Logic)
+ * ប្រើរួមគ្នាដោយ renderRequestCard និង showRequestDetailModal
+ */
+function getDeleteButtonHtml(request) {
     let deleteButton = ''; // Default: មិនបង្ហាញប៊ូតុងលុប
     const now = new Date();
 
@@ -506,7 +484,6 @@ function renderRequestCard(request) {
         // (Part 2) ពិនិត្យច្បាប់ 55 នាទី
         let decisionTime;
         
-        // ព្យាយាមអាន decisionAt (អាចជា Firebase Timestamp, object, or string)
         if (request.decisionAt?.toDate) {
             decisionTime = request.decisionAt.toDate(); // ពី Firestore Timestamp
         } else if (request.decisionAt?.seconds) {
@@ -545,9 +522,40 @@ function renderRequestCard(request) {
              `;
         }
     }
+    return deleteButton;
+}
+
+
+// --- [*** កែសម្រួលនៅទីនេះ ***] ---
+// --- Render Single Request Card (Full Detail) ---
+function renderRequestCard(request) {
+    if (!request || !request.id) return '';
+    
+    // --- Logic សម្រាប់ប៊ូតុង អនុម័ត/បដិសេធ ---
+    let actionButtons = '';
+    if (request.status === 'pending') {
+        actionButtons = `
+            <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
+                <button data-id="${request.id}" data-type="${request.type}" data-action="approve" class="flex-1 action-btn bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
+                    <i class="fas fa-check fa-fw"></i> អនុម័ត
+                </button>
+                <button data-id="${request.id}" data-type="${request.type}" data-action="reject" class="flex-1 action-btn bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
+                    <i class="fas fa-times fa-fw"></i> បដិសេធ
+                </button>
+            </div>`;
+    } else if (request.status === 'editing') {
+        actionButtons = `
+            <div class="mt-4 pt-3 border-t border-primary text-center">
+                <p class="text-xs text-yellow-600 dark:text-yellow-400 italic p-2 bg-yellow-100 dark:bg-yellow-900 rounded-lg">
+                    <i class="fas fa-exclamation-triangle fa-fw"></i> បុគ្គលិកកំពុងកែសម្រួល។ មិនអាចអនុម័ត/បដិសេធបានទេ។
+                </p>
+            </div>`;
+    }
+
+    // --- [កែសម្រួល] ហៅ Function ថ្មី (getDeleteButtonHtml) ---
+    const deleteButton = getDeleteButtonHtml(request);
     
     // --- Render កាត ---
-    // (ផ្នែកនេះមិនបានកែទេ គ្រាន់តែប្រើអថេរ (variables) ថ្មីខាងលើ)
     const detailHtml = getRequestDetailHtml(request, deleteButton); 
 
     return `
@@ -625,10 +633,16 @@ function getRequestDetailHtml(request, extraHeaderHtml = '') {
     `;
 }
 
+// --- [*** កែសម្រួលនៅទីនេះ ***] ---
 // --- Show/Hide Request Detail Modal ---
 function showRequestDetailModal(request) {
     if (!requestDetailModal || !detailModalContent) return;
-    detailModalContent.innerHTML = getRequestDetailHtml(request, '');
+    
+    // [កែសម្រួល] ហៅ Function ថ្មី (getDeleteButtonHtml) ដើម្បីយកប៊ូតុងលុប
+    const deleteButtonHtml = getDeleteButtonHtml(request);
+
+    // [កែសម្រួល] បញ្ចូល deleteButtonHtml ទៅក្នុង Modal
+    detailModalContent.innerHTML = getRequestDetailHtml(request, deleteButtonHtml);
     requestDetailModal.classList.remove('hidden');
 }
 function hideRequestDetailModal() {
@@ -669,17 +683,16 @@ function promptForAdminAction(button) {
 }
 
 
-// --- [កែសម្រួល] Execute Admin Action (UI part) ---
-// This function now handles the UI (loading button) and calls the service
+// --- Execute Admin Action (UI part) ---
 async function executeAdminAction(requestId, requestType, action) {
     console.log(`Executing Action: ${action}, Type: ${requestType}, ID: ${requestId}`);
 
-    // Find the original button that was clicked (Approve/Reject/Delete)
+    // [កែសម្រួល] ស្វែងរកប៊ូតុង ទាំងនៅក្នុង List ឬ នៅក្នុង Modal
     const originalButton = document.querySelector(`.action-btn[data-id="${requestId}"][data-action="${action}"]`);
     let originalButtonHtml = '';
     
     if (originalButton) {
-        originalButtonHtml = originalButton.innerHTML; // Save original content
+        originalButtonHtml = originalButton.innerHTML; 
         originalButton.disabled = true;
         originalButton.innerHTML = (action === 'delete') 
             ? `<i class="fas fa-spinner fa-spin"></i>`
@@ -687,20 +700,16 @@ async function executeAdminAction(requestId, requestType, action) {
     }
 
     try {
-        // [កែសម្រួល] Call the service function
         await performAdminAction(requestId, requestType, action, ADMIN_NAME);
         
         console.log(`Request ${requestId} successfully ${action}d.`);
         const successMessage = (action === 'approve') ? 'អនុម័ត' : (action === 'reject') ? 'បដិសេធ' : 'លុប';
         showCustomAlert("ជោគជ័យ!", `សំណើ (${requestId}) ត្រូវបាន ${successMessage} ដោយជោគជ័យ។`, "success");
         
-        // Note: The button is removed by the real-time render, so we don't need to re-enable it on success.
-        
     } catch (error) {
         console.error(`Error ${action}ing request ${requestId}:`, error);
         showCustomAlert("Error", `មានបញ្ហា ${action} សំណើ: ${error.message}`);
         
-        // Re-enable the button ONLY if an error occurred
         if (originalButton) {
             originalButton.disabled = false;
             originalButton.innerHTML = originalButtonHtml;
