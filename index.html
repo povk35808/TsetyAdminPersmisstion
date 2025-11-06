@@ -569,73 +569,20 @@
             `;
         }
 
-        // --- [NEW] Helper to check if a request can be deleted ---
-        function canDeleteRequest(request) {
-            if (!request || !request.status) return false;
-
-            const status = request.status;
-
-            if (status === 'pending') {
-                // អាចលុបបានតានតែ 'pending'
-                return true;
-            }
-            
-            if (status === 'editing') {
-                // មិនអាចលុបបានពេល 'editing'
-                return false;
-            }
-
-            if (status === 'approved' || status === 'rejected') {
-                // ពិនិត្យច្បាប់ 55 នាទី
-                if (!request.decisionAt) {
-                    // console.log(`Delete check for ${request.id}: Denied (No decisionAt)`);
-                    return false; // គ្មាន timestamp, មិនអាចពិនិត្យ
-                }
-                
-                let decisionTime;
-                
-                // ដោះស្រាយ Firestore Timestamp (which has .toDate())
-                if (request.decisionAt.toDate) {
-                    decisionTime = request.decisionAt.toDate();
-                } else if (request.decisionAt.seconds) {
-                    decisionTime = new Date(request.decisionAt.seconds * 1000);
-                } else {
-                    console.warn(`Could not parse decisionAt time for ${request.id}:`, request.decisionAt);
-                    return false; // ទ្រង់ទ្រាយពេលវេលាមិនស្គាល់
-                }
-
-                const now = new Date();
-                const diffMs = now.getTime() - decisionTime.getTime();
-                const diffMins = diffMs / (1000 * 60);
-
-                // console.log(`Time check for ${request.id} (${status}): ${diffMins.toFixed(2)} mins ago. Allowed: ${diffMins < 55}`);
-                
-                return diffMins < 55; // ពិត បើតូចជាង 55 នាទី
-            }
-
-            // បដិសេធតាមលំនាំដើម
-            return false;
-        }
-        // --- Render Single Request Card (Full Detail) ---
         // --- Render Single Request Card (Full Detail) ---
         function renderRequestCard(request) {
             if (!request || !request.id) return '';
             
-            // [MODIFIED] ពិនិត្យមើលថាតើការលុបត្រូវបានអនុញ្ញាត
-            let deleteButton = ''; // ចាប់ផ្តើមដោយទទេ
-            if (canDeleteRequest(request)) {
-                deleteButton = `
+            const deleteButton = `
                 <button data-id="${request.id}" data-type="${request.type}" data-action="delete" class="action-btn text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-500 transition-colors duration-150 p-1 rounded-full">
                     <i class="fas fa-trash-alt fa-fw"></i>
                 </button>
-                `;
-            }
+            `;
 
             let actionButtons = '';
-            // [MODIFIED] បំបែក switch សម្រាប់ 'pending' និង 'editing'
             switch (request.status) {
                 case 'pending':
-                    // 'pending', ប៊ូតុងអាចចុចបាន
+                case 'editing':
                     actionButtons = `
                         <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
                             <button data-id="${request.id}" data-type="${request.type}" data-action="approve" class="flex-1 action-btn bg-green-500 hover:bg-green-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
@@ -646,21 +593,9 @@
                             </button>
                         </div>`;
                     break;
-                case 'editing':
-                    // 'editing', ប៊ូតុងត្រូវបានបិទ (disabled)
-                    actionButtons = `
-                        <div class="flex flex-col sm:flex-row gap-2 mt-4 pt-3 border-t border-primary">
-                            <button disabled class="flex-1 bg-gray-300 text-gray-500 dark:bg-gray-600 dark:text-gray-400 text-sm font-semibold py-2 px-4 rounded-lg shadow-sm cursor-not-allowed flex items-center justify-center gap-1.5" title="User is currently editing this request">
-                                <i class="fas fa-lock fa-fw"></i> User កំពុងកែ...
-                            </button>
-                            <button disabled class="flex-1 bg-gray-300 text-gray-500 dark:bg-gray-600 dark:text-gray-400 text-sm font-semibold py-2 px-4 rounded-lg shadow-sm cursor-not-allowed flex items-center justify-center gap-1.5" title="User is currently editing this request">
-                                <i class="fas fa-lock fa-fw"></i> User កំពុងកែ...
-                            </button>
-                        </div>`;
-                    break;
             }
 
-            // [NEW] ប្រើ helper function ដើម្បីយក inner HTML (ឥឡូវនេះ pass deleteButton ដែលមានលក្ខខណ្ឌ)
+            // [NEW] Use helper function to get inner HTML
             const detailHtml = getRequestDetailHtml(request, deleteButton); 
 
             return `
