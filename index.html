@@ -572,6 +572,8 @@
         // --- Render Single Request Card (Full Detail) ---
          // --- [MODIFIED] Render Single Request Card (Full Detail) ---
         // --- បានកែសម្រួល Logic សម្រាប់ប៊ូតុង Delete, Approve, Reject ---
+        // --- [MODIFIED] Render Single Request Card (Full Detail) ---
+        // --- បានកែសម្រួល Logic សម្រាប់ប៊ូតុង Delete, Approve, Reject (Version 2) ---
         function renderRequestCard(request) {
             if (!request || !request.id) return '';
             
@@ -603,7 +605,7 @@
                     <button data-id="${request.id}" data-type="${request.type}" data-action="reject" class="flex-1 action-btn bg-red-500 hover:bg-red-600 text-white text-sm font-semibold py-2 px-4 rounded-lg shadow-sm transition duration-150 ease-in-out flex items-center justify-center gap-1.5">
                         <i class="fas fa-times fa-fw"></i> បដិសេធ
                     </button>
-                </div>`;
+      _         </div>`;
                 
             // ប៊ូតុង Approve/Reject (Disabled សម្រាប់ 'editing')
             const disabledActionButtons = (message) => `
@@ -649,7 +651,7 @@
                     
                     deleteButtonHtml = canDelete ? activeDeleteButton : disabledDeleteButton(reason);
                     actionButtonsHtml = ''; // គ្មានប៊ូតុង Approve/Reject ទេ ព្រោះបានตัดสินใจហើយ
-                    break;
+        _         break;
                     
                 default:
                     // ក្នុងករណី Status ចម្លែក
