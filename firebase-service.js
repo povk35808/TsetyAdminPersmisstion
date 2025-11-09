@@ -1,4 +1,4 @@
-// ### FILE: firebase-service.js ###
+// ### FILE: firebase-service.js (MODIFIED) ###
 
 import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
 import { getAuth, signInAnonymously, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
@@ -13,6 +13,15 @@ let db, auth;
 let leaveRequestsCollectionPath;
 let outRequestsCollectionPath;
 let currentUnsubscribe = null;
+
+// [*** បន្ថែមថ្មី ***] Helper សម្រាប់ទាញយកថ្ងៃបច្ចុប្បន្ន ជាទម្រង់ dd/MM/yyyy
+function getTodayString() {
+    const date = new Date();
+    const day = String(date.getDate()).padStart(2, '0');
+    const month = String(date.getMonth() + 1).padStart(2, '0');
+    const year = date.getFullYear();
+    return `${day}/${month}/${year}`;
+}
 
 /**
  * Initializes Firebase App and sets up collection paths.
@@ -125,6 +134,13 @@ export function listenToRequests(statusFilter, settings, onDataUpdate, onError) 
             filteredRequests = filteredRequests.filter(doc => doc.department === settings.selectedDepartment);
         }
         
+        // [*** បន្ថែមថ្មី ***] 4. Day filter
+        if (settings.filterCurrentDay) {
+            const todayString = getTodayString();
+            // យើង Filter យកតែសំណើណាដែល startDate ស្មើនឹងថ្ងៃនេះ
+            filteredRequests = filteredRequests.filter(doc => doc.startDate === todayString);
+        }
+
         // Pass the final data back to app.js
         onDataUpdate(filteredRequests, allDepartments, initialLoadsPending);
         if (initialLoadsPending > 0) initialLoadsPending = 0; // Only matters for first load
