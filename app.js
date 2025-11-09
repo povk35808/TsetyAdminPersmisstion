@@ -28,6 +28,9 @@ let mainContentArea, requestListContainer, loadingIndicator, emptyPlaceholder, e
 let settingsPage, toggleMonthFilter, toggleCompactView;
 let currentFilter = 'pending'; // Default filter
 
+// [*** បន្ថែមថ្មី ***]
+let toggleTodayFilter;
+
 // --- Settings Elements ---
 let approvedFilterRadios, toggleDepartmentFilter, departmentFilterContainer, departmentSelect;
 let darkModeRadios, themeSelect;
@@ -35,6 +38,7 @@ let darkModeRadios, themeSelect;
 // --- Settings State ---
 let settings = {
     filterCurrentMonth: false,
+    filterCurrentDay: false, // [*** បន្ថែមថ្មី ***]
     compactViewApproved: false,
     approvedFilterType: 'all', // 'all', 'leave', 'out'
     filterByDepartment: false,
@@ -81,6 +85,8 @@ function loadSettings() {
         localStorage.removeItem('adminSettings');
     }
     
+    // [*** កែសម្រួល ***]
+    if (toggleTodayFilter) toggleTodayFilter.checked = settings.filterCurrentDay;
     if (toggleMonthFilter) toggleMonthFilter.checked = settings.filterCurrentMonth;
     if (toggleCompactView) toggleCompactView.checked = settings.compactViewApproved;
     if (approvedFilterRadios) approvedFilterRadios.forEach(radio => radio.checked = (radio.value === settings.approvedFilterType));
@@ -137,6 +143,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     errorDisplay = document.getElementById('error-display');
     footerNav = document.getElementById('footer-nav');
     settingsPage = document.getElementById('settings-page');
+    
+    // [*** កែសម្រួល ***]
+    toggleTodayFilter = document.getElementById('toggle-today-filter');
     toggleMonthFilter = document.getElementById('toggle-month-filter');
     toggleCompactView = document.getElementById('toggle-compact-view');
     
@@ -238,33 +247,41 @@ document.addEventListener('DOMContentLoaded', async () => {
     if (detailModalCloseBtn) detailModalCloseBtn.addEventListener('click', hideRequestDetailModal);
     if (requestDetailModal) requestDetailModal.addEventListener('click', (e) => { if(e.target === requestDetailModal) hideRequestDetailModal(); });
 
-    // [*** បន្ថែមថ្មី ***] Listener សម្រាប់ប៊ូតុងលុប (Delete) នៅក្នុង Detail Modal
+    // Listener សម្រាប់ប៊ូតុងលុប (Delete) នៅក្នុង Detail Modal
     if (detailModalContent) {
         detailModalContent.addEventListener('click', (event) => {
             const actionButton = event.target.closest('.action-btn');
-            // ត្រូវប្រាកដថាវាជាប៊ូតុង 'delete'
             if (actionButton && actionButton.dataset.action === 'delete') {
                 promptForAdminAction(actionButton);
             }
         });
     }
 
-    // [*** កែសម្រួល ***] Listener សម្រាប់ប៊ូតុង 'Yes' ក្នុង Confirmation Modal
+    // Listener សម្រាប់ប៊ូតុង 'Yes' ក្នុង Confirmation Modal
     if (confirmYesBtn) {
         confirmYesBtn.addEventListener('click', () => {
             const { id, type, action } = confirmYesBtn.dataset;
             if (id && type && action) {
-                // [កែសម្រួល] លាក់ Detail Modal (ប្រសិនបើវាកំពុងបើក) មុនពេលដំណើរការ
                 if (requestDetailModal && !requestDetailModal.classList.contains('hidden')) {
                     hideRequestDetailModal();
                 }
-                executeAdminAction(id, type, action); // Call the UI-side function
+                executeAdminAction(id, type, action);
             }
             confirmationModal.classList.add('hidden');
         });
     }
 
     // --- Listeners for Settings Toggles ---
+
+    // [*** បន្ថែមថ្មី ***] Listener សម្រាប់ Filter ថ្ងៃបច្ចុប្បន្ន
+    if (toggleTodayFilter) {
+        toggleTodayFilter.addEventListener('change', (e) => {
+            settings.filterCurrentDay = e.target.checked;
+            saveSettings();
+            if (currentFilter !== 'settings') setupRequestListener(currentFilter);
+        });
+    }
+
     if (toggleMonthFilter) {
         toggleMonthFilter.addEventListener('change', (e) => {
             settings.filterCurrentMonth = e.target.checked;
@@ -402,9 +419,31 @@ function setupRequestListener(statusFilter = 'pending') {
     );
 }
 
+// --- [*** កែសម្រួលនៅទីនេះ ***] ---
 // --- Sort and Render Combined Requests ---
  function sortAndRenderRequests(requests, currentFilter) {
      globalAllRequests = [...requests]; 
+
+     // [*** បន្ថែមថ្មី ***] Logic សម្រាប់ស្វែងរកសំណើស្ទួន (Duplicate)
+     let duplicateUserIds = new Set();
+     if (currentFilter === 'pending') {
+         // 1. យកថ្ងៃបច្ចុប្បន្ន ជាទម្រង់ "dd/MM/yyyy"
+         const todayString = formatFirestoreTimestamp(new Date(), 'date');
+         
+         // 2. Filter យកតែសំណើ "pending" សម្រាប់ "ថ្ងៃនេះ"
+         const todaysRequests = requests.filter(r => r.startDate === todayString);
+         
+         // 3. រាប់ចំនួន userId
+         const counts = {};
+         todaysRequests.forEach(r => { 
+             if (r.userId) counts[r.userId] = (counts[r.userId] || 0) + 1; 
+         });
+         
+         // 4. បង្កើត Set នៃ userId ណាដែលមានសំណើលើសពី 1
+         duplicateUserIds = new Set(Object.keys(counts).filter(userId => counts[userId] > 1));
+     }
+     
+     // Sory ធម្មតា
      requests.sort((a, b) => {
          const statusPriority = { 'pending': 1, 'editing': 2, 'approved': 3, 'rejected': 4 };
          const priorityA = statusPriority[a.status] || 5;
@@ -416,11 +455,14 @@ function setupRequestListener(statusFilter = 'pending') {
          const timeB = b.requestedAt?.toMillis() ?? b.requestedAt?.seconds ?? 0;
          return (currentFilter === 'pending') ? (timeA - timeB) : (timeB - timeA);
      });
-     renderRequestList(requests);
+
+     // បញ្ជូន Set ស្ទួន ទៅកាន់ function render
+     renderRequestList(requests, duplicateUserIds);
  }
 
+// --- [*** កែសម្រួលនៅទីនេះ ***] ---
 // --- Render Request List ---
-function renderRequestList(requests) {
+function renderRequestList(requests, duplicateUserIds = new Set()) {
     if (!requestListContainer) return;
     const isCompact = (currentFilter === 'approved' && settings.compactViewApproved);
     requestListContainer.className = isCompact ? "grid grid-cols-3 gap-2 pb-20" : "space-y-4 pb-20";
@@ -431,7 +473,8 @@ function renderRequestList(requests) {
     } else {
         if(emptyPlaceholder) emptyPlaceholder.classList.add('hidden');
         requestListContainer.innerHTML = requests.map(req => 
-            isCompact ? renderCompactCard(req) : renderRequestCard(req)
+            // បញ្ជូន Set ស្ទួន ទៅកាន់ function render card
+            isCompact ? renderCompactCard(req) : renderRequestCard(req, duplicateUserIds)
         ).join('');
     }
 }
@@ -457,46 +500,37 @@ function renderCompactCard(request) {
     `;
 }
 
-// --- [*** បង្កើត Function ថ្មី ***] ---
-/**
- * ពិនិត្យមើល Logic សម្រាប់ប៊ូតុងលុប (Delete Button Logic)
- * ប្រើរួមគ្នាដោយ renderRequestCard និង showRequestDetailModal
- */
+// --- Function សម្រាប់បង្កើតប៊ូតុងលុប (Delete Button) ---
 function getDeleteButtonHtml(request) {
-    let deleteButton = ''; // Default: មិនបង្ហាញប៊ូតុងលុប
+    let deleteButton = ''; 
     const now = new Date();
 
     if (request.status === 'pending') {
-        // (Part 1) អនុញ្ញាតឲ្យលុប ពេល 'pending'
         deleteButton = `
             <button data-id="${request.id}" data-type="${request.type}" data-action="delete" class="action-btn text-gray-400 hover:text-red-600 dark:text-gray-500 dark:hover:text-red-500 transition-colors duration-150 p-1 rounded-full" title="លុប">
                 <i class="fas fa-trash-alt fa-fw"></i>
             </button>
         `;
     } else if (request.status === 'editing') {
-        // (Part 1) មិនអនុញ្ញាតឲ្យលុប ពេល 'editing'
         deleteButton = `
             <span class="text-gray-400 dark:text-gray-500 p-1" title="កំពុងកែសម្រួល, មិនអាចលុបបាន">
                 <i class="fas fa-ban fa-fw"></i>
             </span>
         `;
     } else if (request.status === 'approved' || request.status === 'rejected') {
-        // (Part 2) ពិនិត្យច្បាប់ 55 នាទី
         let decisionTime;
-        
         if (request.decisionAt?.toDate) {
-            decisionTime = request.decisionAt.toDate(); // ពី Firestore Timestamp
+            decisionTime = request.decisionAt.toDate(); 
         } else if (request.decisionAt?.seconds) {
-            decisionTime = new Date(request.decisionAt.seconds * 1000); // ពី Serialized object
+            decisionTime = new Date(request.decisionAt.seconds * 1000); 
         } else if (request.decisionAt) {
-            try { decisionTime = new Date(request.decisionAt); } catch(e){} // ពី String
+            try { decisionTime = new Date(request.decisionAt); } catch(e){}
         }
 
         if (decisionTime && !isNaN(decisionTime.getTime())) {
             const minutesSinceDecision = (now.getTime() - decisionTime.getTime()) / (1000 * 60);
             
             if (minutesSinceDecision < 55) {
-                // នៅក្រោម 55 នាទី: អនុញ្ញាតឲ្យលុប
                 const minutesLeft = Math.floor(55 - minutesSinceDecision);
                 deleteButton = `
                     <button data-id="${request.id}" data-type="${request.type}" data-action="delete" 
@@ -506,7 +540,6 @@ function getDeleteButtonHtml(request) {
                     </button>
                 `;
             } else {
-                // លើស 55 នាទី: បង្ហាញ icon lock
                 deleteButton = `
                     <span class="text-gray-400 dark:text-gray-500 p-1" title="ផុតកំណត់ (55 នាទី) មិនអាចលុបបានទៀតទេ">
                         <i class="fas fa-lock fa-fw"></i>
@@ -514,7 +547,6 @@ function getDeleteButtonHtml(request) {
                 `;
             }
         } else {
-            // រកមិនឃើញ decisionAt ឬទិន្នន័យមិនត្រឹមត្រូវ
             deleteButton = `
                 <span class="text-gray-400 dark:text-gray-500 p-1" title="មិនមានពេលវេលាសម្រេចចិត្ត (decisionAt)">
                     <i class="fas fa-question-circle fa-fw"></i>
@@ -528,9 +560,20 @@ function getDeleteButtonHtml(request) {
 
 // --- [*** កែសម្រួលនៅទីនេះ ***] ---
 // --- Render Single Request Card (Full Detail) ---
-function renderRequestCard(request) {
+function renderRequestCard(request, duplicateUserIds = new Set()) {
     if (!request || !request.id) return '';
     
+    // [*** បន្ថែមថ្មី ***] ពិនិត្យមើល Logic ស្ទួន
+    const todayString = formatFirestoreTimestamp(new Date(), 'date');
+    const isDuplicate = currentFilter === 'pending' && 
+                        request.startDate === todayString && 
+                        duplicateUserIds.has(request.userId);
+    
+    // បើស្ទួន ប្រើ class 'border-red-500 border-2', បើមិនស្ទួន ប្រើ 'border-primary'
+    const cardBorderClass = isDuplicate 
+        ? 'border-red-500 border-2 shadow-red-200 dark:shadow-red-800'
+        : 'border-primary';
+
     // --- Logic សម្រាប់ប៊ូតុង អនុម័ត/បដិសេធ ---
     let actionButtons = '';
     if (request.status === 'pending') {
@@ -552,19 +595,19 @@ function renderRequestCard(request) {
             </div>`;
     }
 
-    // --- [កែសម្រួល] ហៅ Function ថ្មី (getDeleteButtonHtml) ---
+    // --- ហៅ Function (getDeleteButtonHtml) ---
     const deleteButton = getDeleteButtonHtml(request);
     
     // --- Render កាត ---
     const detailHtml = getRequestDetailHtml(request, deleteButton); 
 
+    // [*** កែសម្រួល ***] បន្ថែម cardBorderClass ទៅក្នុង div ខាងក្រៅ
     return `
-        <div class="card-bg border border-primary rounded-lg shadow-md p-4 mb-4 break-inside-avoid hover:shadow-lg transition-shadow duration-200">
+        <div class="card-bg ${cardBorderClass} rounded-lg shadow-md p-4 mb-4 break-inside-avoid hover:shadow-lg transition-shadow duration-200">
             ${detailHtml}
             ${actionButtons}
         </div>`;
 }
-// --- [*** ចប់ការកែសម្រួល ***] ---
 
  
 // --- Helper to generate detail HTML for Full Card and Modal ---
@@ -633,15 +676,10 @@ function getRequestDetailHtml(request, extraHeaderHtml = '') {
     `;
 }
 
-// --- [*** កែសម្រួលនៅទីនេះ ***] ---
 // --- Show/Hide Request Detail Modal ---
 function showRequestDetailModal(request) {
     if (!requestDetailModal || !detailModalContent) return;
-    
-    // [កែសម្រួល] ហៅ Function ថ្មី (getDeleteButtonHtml) ដើម្បីយកប៊ូតុងលុប
     const deleteButtonHtml = getDeleteButtonHtml(request);
-
-    // [កែសម្រួល] បញ្ចូល deleteButtonHtml ទៅក្នុង Modal
     detailModalContent.innerHTML = getRequestDetailHtml(request, deleteButtonHtml);
     requestDetailModal.classList.remove('hidden');
 }
@@ -687,7 +725,6 @@ function promptForAdminAction(button) {
 async function executeAdminAction(requestId, requestType, action) {
     console.log(`Executing Action: ${action}, Type: ${requestType}, ID: ${requestId}`);
 
-    // [កែសម្រួល] ស្វែងរកប៊ូតុង ទាំងនៅក្នុង List ឬ នៅក្នុង Modal
     const originalButton = document.querySelector(`.action-btn[data-id="${requestId}"][data-action="${action}"]`);
     let originalButtonHtml = '';
     
